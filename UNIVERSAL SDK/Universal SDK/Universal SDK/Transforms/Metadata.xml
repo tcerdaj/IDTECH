@@ -1,0 +1,11 @@
+﻿<metadata>
+  <!--
+  This sample removes the class: android.support.v4.content.AsyncTaskLoader.LoadTask:
+  <remove-node path="/api/package[@name='android.support.v4.content']/class[@name='AsyncTaskLoader.LoadTask']" />
+  
+  This sample removes the method: android.support.v4.content.CursorLoader.loadInBackground:
+  <remove-node path="/api/package[@name='android.support.v4.content']/class[@name='CursorLoader']/method[@name='loadInBackground']" />
+  -->
+
+  <attr path="/api/package[@name='com.idtechproducts.device']/interface[@name='OnReceiverListener']/method[@name='lcdDisplay' and count(parameter)=5 and parameter[1][@type='int'] and parameter[2][@type='java.lang.String[]'] and parameter[3][@type='int'] and parameter[4][@type='byte[]'] and parameter[5][@type='byte']]" name="managedName">TransactionFeedBack</attr>
+</metadata>
