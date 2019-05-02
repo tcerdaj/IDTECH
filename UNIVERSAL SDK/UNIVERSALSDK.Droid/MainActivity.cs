@@ -35,7 +35,7 @@ namespace UNIVERSALSDK.Droid
         static BLEScanCallback mLeScanCallback;
         static BluetoothLeScanner bleScanner;
         View view;
-        TextView welcomeText;
+        static TextView welcomeText;
         ImageView batteryLifeView;
         static Android.OS.Handler hanlder;
         bool isScanning, transactionCompleted;
@@ -204,7 +204,7 @@ namespace UNIVERSALSDK.Droid
                     StartActivityForResult(enableBtIntent, REQUEST_ENABLE_BT);
                 }
 
-                mLeScanCallback = new BLEScanCallback() { RegisterBLE = RegisterBLE };
+                mLeScanCallback = new BLEScanCallback() { RegisterBLE = RegisterBLE, _registered=false };
                 scanLeDevice(true, BLE_ScanTimeout);
             }
         }
@@ -643,19 +643,24 @@ namespace UNIVERSALSDK.Droid
 
                 //if (!string.IsNullOrEmpty(result.Device.Name) && result.Device.Name.ToUpper().Contains("IDTECH"))
                 //if (result.Device.Address == "00:1C:97:18:77:34")
-
+                hanlder.Post(() =>
+                {
                     Log.Info("OnScanResult", "Device..." + (string.IsNullOrEmpty(r.Device.Address) ? r.Device.Name : r.Device.Address));
                     Log.Info("OnScanResult", "Device Name..." + (string.IsNullOrEmpty(r.Device.Address) ? r.Device.Name : r.Device.Name));
                     System.Diagnostics.Debug.WriteLine("    Name " + r.Device.Name);
                     System.Diagnostics.Debug.WriteLine("    Address " + r.Device.Address);
+                    if (_registered)
+                        bleScanner.StopScan(mLeScanCallback);
 
                     devicesScanned++;
+
+                    welcomeText.Text = "Scanning..." + devicesScanned;
 
                     System.Diagnostics.Debug.WriteLine("    devicesScanned: " + devicesScanned);
 
                     if (r.Device.Address.StartsWith(OUI))
                     {
-                        AddDeviceToFilter(r);
+                        //AddDeviceToFilter(r);
 
                         if (!_registered)
                         {
@@ -665,11 +670,11 @@ namespace UNIVERSALSDK.Droid
                             System.Diagnostics.Debug.WriteLine("    tXPower " + r.ScanRecord.TxPowerLevel);
                             System.Diagnostics.Debug.WriteLine("    Rssi " + r.Rssi);
 
-                            bleScanner.StopScan(mLeScanCallback);
+                            welcomeText.Text = "Device Found - " + r.Device.Name;
 
                             _device = r.Device;
                             var callBack = new BLEGattCallBack();
-                            gatt = _device.ConnectGatt(Application.Context, true, callBack);
+                            gatt = r.Device.ConnectGatt(Application.Context, true, callBack);
 
                             var uuids = r.ScanRecord.ServiceUuids;
                             Log.Info("OnScanResult", "Device found " + r.Device.Name);
@@ -677,8 +682,14 @@ namespace UNIVERSALSDK.Droid
                             BluetoothLEController.SetBluetoothDevice(r.Device);
                             _registered = true;
                             RegisterBLE?.Invoke(uuids);
+
+                            bleScanner.StopScan(mLeScanCallback);
                         }
                     }
+                    
+                });
+
+                   
             }
 
             private static void AddDeviceToFilter(ScanResult r)
