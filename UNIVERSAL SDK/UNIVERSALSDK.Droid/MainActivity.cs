@@ -15,12 +15,14 @@ using Com.Idtechproducts.Device;
 using Com.Idtechproducts.Device.Bluetooth;
 using static Android.Bluetooth.BluetoothAdapter;
 using static Com.Idtechproducts.Device.ReaderInfo;
-using System.Linq;
 using Android.Support.V4.Content;
 using Android;
 using Android.Support.V4.App;
-using System.Linq;
 using System.Collections;
+using System.Runtime.Serialization.Formatters.Binary;
+using System.IO;
+using System.Text;
+using System.Threading;
 
 namespace UNIVERSALSDK.Droid
 {
@@ -34,24 +36,28 @@ namespace UNIVERSALSDK.Droid
         BluetoothLeScanner bleScanner;
         View view;
         TextView welcomeText;
+        ImageView batteryLifeView;
         static Android.OS.Handler hanlder;
         bool isScanning, transactionCompleted;
         List<ScanFilter> filters;
-        private static long START_GATT_DELAY = 500; // msec
         private Handler mStartGattHandler = new Handler();
         static BluetoothDevice _device;
-       
+        const string DEVICE_FILTERS = "DeviceFilters", DEVICE_ADDRESS = "DeviceAddress";
+        static ISharedPreferences sharedPre;
 
         protected override void OnCreate(Bundle savedInstanceState)
         {
             base.OnCreate(savedInstanceState);
             SetContentView(Resource.Layout.activity_main);
 
+            batteryLifeView = (ImageView)FindViewById(Resource.Id.batteryLife);
             welcomeText = (TextView)FindViewById(Resource.Id.welcomeText);
             welcomeText.Text = "Swipe payment";
             Log.Info("Initialize", "Init...");
             hanlder = new Handler();
             isScanning = false;
+
+            sharedPre = Application.Context.GetSharedPreferences(DEVICE_FILTERS, FileCreationMode.Private);
 
             filters = filters ?? new List<ScanFilter>();
 
@@ -104,6 +110,8 @@ namespace UNIVERSALSDK.Droid
                 var handler = new Android.OS.Handler();
                 welcomeText.Text = "Scanning...";
                 Log.Info("scanLeDevice", "Scanning...");
+                batteryLifeView.Visibility = ViewStates.Invisible;
+
                 if (enable)
                 {
                     if (isScanning)
@@ -126,7 +134,7 @@ namespace UNIVERSALSDK.Droid
                     }, timeout);
 
                     isScanning = true;
-                    bleScanner.StartScan(filters, settings, mLeScanCallback);
+                    bleScanner.StartScan(GetFilters(), settings, mLeScanCallback);
                 }
                 else
                 {
@@ -195,7 +203,7 @@ namespace UNIVERSALSDK.Droid
             Log.Info("RegisterBLE", "RegisterBLE");
             isScanning = false;
             bleScanner.StopScan(mLeScanCallback);
-            SetFilters(uuids);
+            //SetFilters(uuids);
             myVP3300Reader.RegisterListen();
         }
 
@@ -214,6 +222,34 @@ namespace UNIVERSALSDK.Droid
                     filters.Add(sf);
                 }
             }
+        }
+
+        private IList<ScanFilter> GetFilters()
+        {
+            IList<ScanFilter> result = new List<ScanFilter>();
+
+            try
+            {
+                string adddressStr = sharedPre.GetString(DEVICE_ADDRESS, "");
+
+                string[] addresses = adddressStr.Split("|");
+
+                foreach (var add in addresses)
+                {
+                    ScanFilter sf = new ScanFilter.Builder()
+                        .SetDeviceAddress(_device.Address)
+                        .Build();
+
+                    result.Add(sf);
+                }
+            }
+            catch (Exception ex)
+            {
+
+                Log.Error("GetFilters", ex.Message);
+            }
+
+            return result;
         }
 
         public void ICCNotifyInfo(byte[] p0, string p1)
@@ -259,7 +295,10 @@ namespace UNIVERSALSDK.Droid
                     else if (batteryLevel <= 192)
                         level = "Low";
 
-                    welcomeText.Text = "Battery level " + level;
+                    //welcomeText.Text = "Battery level " + level;
+                    batteryLifeView.Visibility = ViewStates.Visible;
+                    int image = level == "Full" ? Resource.Mipmap.full : level == "Low" ? Resource.Mipmap.low : Resource.Mipmap.medium;
+                    batteryLifeView.SetImageResource(image);
                     await System.Threading.Tasks.Task.Delay(5000);
                 }
 
@@ -276,7 +315,11 @@ namespace UNIVERSALSDK.Droid
                 Log.Info("DeviceDisconnected", "Disconnected");
 
                 if (!isScanning)
+                {
                     welcomeText.Text = "Device Disconnected";
+                    batteryLifeView.Visibility = ViewStates.Invisible;
+                    ReleaseDevice();
+                }
             });
         }
         string detail = "";
@@ -302,30 +345,29 @@ namespace UNIVERSALSDK.Droid
                     {
 
                         detail += key.Key + ": ";
+                        var d = emvData.UnencryptedTags[key.Key];
 
-                        byte[] data = (byte[])key.Value;
+                        byte[] data = Encoding.ASCII.GetBytes(key.Key.ToString());
                         detail += Common.GetHexStringFromBytes(data) + "nrnn";
                     }
                 }
                 if (emvData.MaskedTags != null && emvData.MaskedTags.Count > 0)
                 {
                     detail += "Masked Tags:nrnn";
-                    var keys = emvData.MaskedTags.Keys;
-                    foreach (var key in keys)
+                    foreach (DictionaryEntry key in emvData.MaskedTags)
                     {
                         detail += key + ": ";
-                        byte[] data = (byte[])emvData.MaskedTags[(object)key];
+                        byte[] data = Encoding.ASCII.GetBytes(key.Key.ToString());
                         detail += Common.GetHexStringFromBytes(data) + "nrnn";
                     }
                 }
                 if (emvData.EncryptedTags != null && emvData.EncryptedTags.Count > 0)
                 {
                     detail += "Encrypted Tags:nrnn";
-                    var keys = emvData.EncryptedTags.Keys;
-                    foreach (var key in keys)
+                    foreach (DictionaryEntry key in emvData.EncryptedTags)
                     {
                         detail += key + ": ";
-                        byte[] data = (byte[])emvData.EncryptedTags[(object)key];
+                        byte[] data = Encoding.ASCII.GetBytes(key.Key.ToString());
                         detail += Common.GetHexStringFromBytes(data) + "nrnn";
                     }
                 }
@@ -354,7 +396,17 @@ namespace UNIVERSALSDK.Droid
             });
         }
 
-     
+        public static byte[] ObjectToByteArray(object obj)
+        {
+
+            BinaryFormatter bf = new BinaryFormatter();
+            using (var ms = new MemoryStream())
+            {
+                bf.Serialize(ms, obj);
+                return ms.ToArray();
+            }
+        }
+
         public void LcdDisplay(int mode, string[] lines, int timeout)
         {
             hanlder.Post(async () =>
@@ -439,6 +491,18 @@ namespace UNIVERSALSDK.Droid
             }
         }
 
+        public class BLEGattCallBack : BluetoothGattCallback
+        {
+            public override void OnServicesDiscovered(BluetoothGatt gatt, [GeneratedEnum] GattStatus status)
+            {
+                base.OnServicesDiscovered(gatt, status);
+            }
+
+            public override void OnConnectionStateChange(BluetoothGatt gatt, [GeneratedEnum] GattStatus status, [GeneratedEnum] ProfileState newState)
+            {
+                base.OnConnectionStateChange(gatt, status, newState);
+            }
+        }
         public class BLEScanCallback : Android.Bluetooth.LE.ScanCallback
         {
             const string OUI = "00:1C:97"; // IDtech's MAC Address Organizationally Unique Identifier
@@ -462,8 +526,7 @@ namespace UNIVERSALSDK.Droid
                     Log.Info("OnScanResult", "Device Name..." + (string.IsNullOrEmpty(r.Device.Address) ? r.Device.Name : r.Device.Name));
                     System.Diagnostics.Debug.WriteLine("    Name " + r.Device.Name);
                     System.Diagnostics.Debug.WriteLine("    Address " + r.Device.Address);
-                 
-
+                    
                     if (r.Device.Address.StartsWith(OUI))
                     {
                         if (!_registered)
@@ -474,13 +537,28 @@ namespace UNIVERSALSDK.Droid
                             System.Diagnostics.Debug.WriteLine("    tXPower " + r.ScanRecord.TxPowerLevel);
                             System.Diagnostics.Debug.WriteLine("    Rssi " + r.Rssi);
 
+                            var editor = sharedPre.Edit();
+                            string deviceAddress = sharedPre.GetString(DEVICE_ADDRESS, "");
+
+                            if (string.IsNullOrEmpty(deviceAddress))
+                                editor.PutString(DEVICE_ADDRESS, r.Device.Address);
+                            else
+                            {
+                                var stringToAdd = string.Format("{0}|{1}", deviceAddress, r.Device.Address);
+                                editor.PutString(DEVICE_ADDRESS, stringToAdd);
+                            }
+
                             _device = r.Device;
+                            var callBack = new BLEGattCallBack();
+                            var gatt = _device.ConnectGatt(Application.Context, true, callBack);
+
                             var uuids = r.ScanRecord.ServiceUuids;
                             Log.Info("OnScanResult", "Device found " + r.Device.Name);
                             Com.Idtechproducts.Device.Common.BLEDeviceName = r.Device.Name;
                             BluetoothLEController.SetBluetoothDevice(r.Device);
                             _registered = true;
                             RegisterBLE?.Invoke(uuids);
+
                         }
                     }
                 });
