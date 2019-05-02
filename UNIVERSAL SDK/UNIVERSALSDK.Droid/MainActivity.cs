@@ -32,8 +32,8 @@ namespace UNIVERSALSDK.Droid
         private IDT_VP3300 myVP3300Reader = null;
         private BluetoothAdapter mBtAdapter = null;
         private long BLE_ScanTimeout = 30000; //in milliseconds
-        private BLEScanCallback mLeScanCallback;
-        BluetoothLeScanner bleScanner;
+        static BLEScanCallback mLeScanCallback;
+        static BluetoothLeScanner bleScanner;
         View view;
         TextView welcomeText;
         ImageView batteryLifeView;
@@ -44,6 +44,9 @@ namespace UNIVERSALSDK.Droid
         static BluetoothDevice _device;
         const string DEVICE_FILTERS = "DeviceFilters", DEVICE_ADDRESS = "DeviceAddress";
         static ISharedPreferences sharedPre;
+        static BluetoothGatt gatt;
+        BluetoothManager _manager;
+        static int devicesScanned;
 
         protected override void OnCreate(Bundle savedInstanceState)
         {
@@ -114,27 +117,38 @@ namespace UNIVERSALSDK.Droid
 
                 if (enable)
                 {
-                    if (isScanning)
-                        bleScanner.StopScan(mLeScanCallback);
-
-                    bleScanner.UnregisterFromRuntime();
+                    var scanFilter = new ScanFilter.Builder().Build();
                     bleScanner.FlushPendingScanResults(mLeScanCallback);
-                    ScanSettings settings = new ScanSettings.Builder().SetScanMode(Android.Bluetooth.LE.ScanMode.LowLatency).Build();
+                    ScanSettings settings = new ScanSettings
+                                                 .Builder()
+                                                 .SetCallbackType(ScanCallbackType.AllMatches)
+                                                 .SetMatchMode(BluetoothScanMatchMode.Aggressive)
+                                                 .SetScanMode(Android.Bluetooth.LE.ScanMode.LowLatency)
+                                                 //.SetReportDelay(timeout)
+                                                 .Build();
+
 
                     handler.PostDelayed(() =>
                     {
-                        if (!myVP3300Reader.Device_isConnected() && !transactionCompleted)
+                        
+
+                        if (myVP3300Reader != null && !myVP3300Reader.Device_isConnected() && !transactionCompleted)
                         {
-                            welcomeText.Text = "Timeout";
-                            Snackbar.Make(view, "Timeout", Snackbar.LengthLong)
+                            welcomeText.Text = "Timeout - Devices Scanned: " + devicesScanned; ;
+                            Snackbar.Make(view, "Timeout " + devicesScanned + "- Devices", Snackbar.LengthLong)
                         .SetAction("Action", (Android.Views.View.IOnClickListener)null).Show();
                             if (isScanning)
+                            {
                                 bleScanner.StopScan(mLeScanCallback);
+                                isScanning = false;
+                            }
                         }
                     }, timeout);
 
                     isScanning = true;
-                    bleScanner.StartScan(GetFilters(), settings, mLeScanCallback);
+                    var success = _manager.Adapter.StartDiscovery();
+                    devicesScanned = 0;
+                    bleScanner.StartScan(new List<ScanFilter> { scanFilter }, settings, mLeScanCallback);
                 }
                 else
                 {
@@ -170,20 +184,18 @@ namespace UNIVERSALSDK.Droid
             welcomeText.Text = "";
             transactionCompleted = false;
 
-            if (myVP3300Reader != null)
-            {
-                myVP3300Reader.UnregisterListen();
-                myVP3300Reader.Release();
-                // myVP3300Reader = null;
-            }
+            _manager = (BluetoothManager)Android.App.Application.Context.GetSystemService(Android.Content.Context.BluetoothService);
+
+            mBtAdapter = BluetoothAdapter.DefaultAdapter;
+
+            bleScanner = mBtAdapter.BluetoothLeScanner;
+            //ReleaseDevice();
 
             myVP3300Reader = new IDT_VP3300(this, Application.Context);
-            myVP3300Reader.RegisterListen();
+            myVP3300Reader.UnregisterListen();
 
             if (myVP3300Reader.Device_setDeviceType(DEVICE_TYPE.DeviceVp3300Bt))
             {
-
-                mBtAdapter = BluetoothAdapter.DefaultAdapter;
                 var REQUEST_ENABLE_BT = 1;
 
                 if (!mBtAdapter.IsEnabled)
@@ -192,7 +204,6 @@ namespace UNIVERSALSDK.Droid
                     StartActivityForResult(enableBtIntent, REQUEST_ENABLE_BT);
                 }
 
-                bleScanner = mBtAdapter.BluetoothLeScanner;
                 mLeScanCallback = new BLEScanCallback() { RegisterBLE = RegisterBLE };
                 scanLeDevice(true, BLE_ScanTimeout);
             }
@@ -202,8 +213,7 @@ namespace UNIVERSALSDK.Droid
         {
             Log.Info("RegisterBLE", "RegisterBLE");
             isScanning = false;
-            bleScanner.StopScan(mLeScanCallback);
-            //SetFilters(uuids);
+            myVP3300Reader.UnregisterListen();
             myVP3300Reader.RegisterListen();
         }
 
@@ -218,7 +228,7 @@ namespace UNIVERSALSDK.Droid
                         .SetDeviceAddress(_device.Address)
                         .SetDeviceName(_device.Name)
                         .Build();
-                        
+
                     filters.Add(sf);
                 }
             }
@@ -319,6 +329,12 @@ namespace UNIVERSALSDK.Droid
                     welcomeText.Text = "Device Disconnected";
                     batteryLifeView.Visibility = ViewStates.Invisible;
                     ReleaseDevice();
+
+                    if (gatt != null && _manager != null && _manager.GetConnectionState(gatt.Device, ProfileType.Gatt) == ProfileState.Connected)
+                    {
+                        gatt?.Disconnect();
+                        myVP3300Reader = null;
+                    }
                 }
             });
         }
@@ -328,72 +344,156 @@ namespace UNIVERSALSDK.Droid
         {
             hanlder.Post(async () =>
             {
-
-                detail += Common.EmvErrorCodes(emvData.Result);
-                detail += "nrnn";
-
-                if (emvData.Result == IDTEMVData.StartTransSuccess)
-                    detail += "Start transaction response:nrnn";
-                else if (emvData.Result == IDTEMVData.GoOnline)
-                    detail += "nrnnAuthentication response:nrnn";
-                else
-                    detail += "nrnnComplete Transaction response:nrnn";
-                if (emvData.UnencryptedTags != null && emvData.UnencryptedTags.Count > 0)
-                {
-                    detail += "Unencrypted Tags:nrnn";
-                    foreach (DictionaryEntry key in emvData.UnencryptedTags)
-                    {
-
-                        detail += key.Key + ": ";
-                        var d = emvData.UnencryptedTags[key.Key];
-
-                        byte[] data = Encoding.ASCII.GetBytes(key.Key.ToString());
-                        detail += Common.GetHexStringFromBytes(data) + "nrnn";
-                    }
-                }
-                if (emvData.MaskedTags != null && emvData.MaskedTags.Count > 0)
-                {
-                    detail += "Masked Tags:nrnn";
-                    foreach (DictionaryEntry key in emvData.MaskedTags)
-                    {
-                        detail += key + ": ";
-                        byte[] data = Encoding.ASCII.GetBytes(key.Key.ToString());
-                        detail += Common.GetHexStringFromBytes(data) + "nrnn";
-                    }
-                }
-                if (emvData.EncryptedTags != null && emvData.EncryptedTags.Count > 0)
-                {
-                    detail += "Encrypted Tags:nrnn";
-                    foreach (DictionaryEntry key in emvData.EncryptedTags)
-                    {
-                        detail += key + ": ";
-                        byte[] data = Encoding.ASCII.GetBytes(key.Key.ToString());
-                        detail += Common.GetHexStringFromBytes(data) + "nrnn";
-                    }
-                }
-
-                welcomeText.Text = detail;
-                Log.Info("EmvTransactionData", detail);
-
-                if (emvData.Result == IDTEMVData.GoOnline)
-                {
-                    //Auto Complete
-                    byte[] response = new byte[] { 0x30, 0x30 };
-                    myVP3300Reader.Emv_completeTransaction(false, response, null, null, null);
-                }
-                else if (emvData.Result == IDTEMVData.StartTransSuccess)
-                {
-                    //Auto Authenticate
-                    myVP3300Reader.Emv_authenticateTransaction(null);
-                }
-                else
-                {
-                    await System.Threading.Tasks.Task.Delay(2000);
-                    Log.Info("EmvTransactionData", "Transaction completed");
-                    transactionCompleted = true;
-                    ReleaseDevice();
-                }
+                await EmvDataHanldler(emvData);
             });
+        }
+
+        private async System.Threading.Tasks.Task EmvDataHanldler(object dataEntry)
+        {
+            if (dataEntry.GetType() == typeof(IDTEMVData))
+            {
+                var emvData = dataEntry as IDTEMVData;
+                if (emvData != null)
+                {
+
+                    detail += Common.EmvErrorCodes(emvData.Result);
+                    detail += "nrnn";
+
+                    if (emvData.Result == IDTEMVData.StartTransSuccess)
+                        detail += "Start transaction response:nrnn";
+                    else if (emvData.Result == IDTEMVData.GoOnline)
+                        detail += "nrnnAuthentication response:nrnn";
+                    else
+                        detail += "nrnnComplete Transaction response:nrnn";
+                    if (emvData.UnencryptedTags != null && emvData.UnencryptedTags.Count > 0)
+                    {
+                        detail += "Unencrypted Tags:nrnn";
+                        foreach (DictionaryEntry key in emvData.UnencryptedTags)
+                        {
+
+                            detail += key.Key + ": ";
+                            var d = emvData.UnencryptedTags[key.Key];
+
+                            byte[] data = Encoding.ASCII.GetBytes(key.Key.ToString());
+                            detail += Common.GetHexStringFromBytes(data) + "nrnn";
+                        }
+                    }
+                    if (emvData.MaskedTags != null && emvData.MaskedTags.Count > 0)
+                    {
+                        detail += "Masked Tags:nrnn";
+                        foreach (DictionaryEntry key in emvData.MaskedTags)
+                        {
+                            detail += key + ": ";
+                            byte[] data = Encoding.ASCII.GetBytes(key.Key.ToString());
+                            detail += Common.GetHexStringFromBytes(data) + "nrnn";
+                        }
+                    }
+                    if (emvData.EncryptedTags != null && emvData.EncryptedTags.Count > 0)
+                    {
+                        detail += "Encrypted Tags:nrnn";
+                        foreach (DictionaryEntry key in emvData.EncryptedTags)
+                        {
+                            detail += key + ": ";
+                            byte[] data = Encoding.ASCII.GetBytes(key.Key.ToString());
+                            detail += Common.GetHexStringFromBytes(data) + "nrnn";
+                        }
+                    }
+
+                    welcomeText.Text = detail;
+                    Log.Info("EmvTransactionData", detail);
+
+                    if (emvData.Result == IDTEMVData.GoOnline)
+                    {
+                        //Auto Complete
+                        byte[] response = new byte[] { 0x30, 0x30 };
+                        myVP3300Reader.Emv_completeTransaction(false, response, null, null, null);
+                    }
+                    else if (emvData.Result == IDTEMVData.StartTransSuccess)
+                    {
+                        //Auto Authenticate
+                        myVP3300Reader.Emv_authenticateTransaction(null);
+                    }
+                    else
+                    {
+                        await System.Threading.Tasks.Task.Delay(2000);
+                        Log.Info("EmvTransactionData", "Transaction completed");
+                        transactionCompleted = true;
+                        ReleaseDevice();
+                    }
+                }
+            }
+            else if (dataEntry.GetType() == typeof(IDTMSRData))
+            {
+                var emvData = dataEntry as IDTMSRData;
+
+                if (emvData != null)
+                {
+                    detail += Common.EmvErrorCodes(emvData.Result);
+                    detail += "nrnn";
+
+                    if (emvData.Result == IDTEMVData.StartTransSuccess)
+                        detail += "Start transaction response:nrnn";
+                    else if (emvData.Result == IDTEMVData.GoOnline)
+                        detail += "nrnnAuthentication response:nrnn";
+                    else
+                        detail += "nrnnComplete Transaction response:nrnn";
+                    if (emvData.UnencryptedTags != null && emvData.UnencryptedTags.Count > 0)
+                    {
+                        detail += "Unencrypted Tags:nrnn";
+                        foreach (DictionaryEntry key in emvData.UnencryptedTags)
+                        {
+
+                            detail += key.Key + ": ";
+                            var d = emvData.UnencryptedTags[key.Key];
+
+                            byte[] data = Encoding.ASCII.GetBytes(key.Key.ToString());
+                            detail += Common.GetHexStringFromBytes(data) + "nrnn";
+                        }
+                    }
+                    if (emvData.MaskedTags != null && emvData.MaskedTags.Count > 0)
+                    {
+                        detail += "Masked Tags:nrnn";
+                        foreach (DictionaryEntry key in emvData.MaskedTags)
+                        {
+                            detail += key + ": ";
+                            byte[] data = Encoding.ASCII.GetBytes(key.Key.ToString());
+                            detail += Common.GetHexStringFromBytes(data) + "nrnn";
+                        }
+                    }
+                    if (emvData.EncryptedTags != null && emvData.EncryptedTags.Count > 0)
+                    {
+                        detail += "Encrypted Tags:nrnn";
+                        foreach (DictionaryEntry key in emvData.EncryptedTags)
+                        {
+                            detail += key + ": ";
+                            byte[] data = Encoding.ASCII.GetBytes(key.Key.ToString());
+                            detail += Common.GetHexStringFromBytes(data) + "nrnn";
+                        }
+                    }
+
+                    welcomeText.Text = detail;
+                    Log.Info("EmvTransactionData", detail);
+
+                    if (emvData.Result == IDTEMVData.GoOnline)
+                    {
+                        //Auto Complete
+                        byte[] response = new byte[] { 0x30, 0x30 };
+                        myVP3300Reader.Emv_completeTransaction(false, response, null, null, null);
+                    }
+                    else if (emvData.Result == IDTEMVData.StartTransSuccess)
+                    {
+                        //Auto Authenticate
+                        myVP3300Reader.Emv_authenticateTransaction(null);
+                    }
+                    else
+                    {
+                        await System.Threading.Tasks.Task.Delay(2000);
+                        Log.Info("EmvTransactionData", "Transaction completed");
+                        transactionCompleted = true;
+                        ReleaseDevice();
+                    }
+                }
+            }
         }
 
         public static byte[] ObjectToByteArray(object obj)
@@ -465,18 +565,32 @@ namespace UNIVERSALSDK.Droid
             throw new NotImplementedException();
         }
 
-        public void SwipeMSRData(IDTMSRData p0)
+        public void SwipeMSRData(IDTMSRData msrData)
         {
-            throw new NotImplementedException();
+            hanlder.Post(async () =>
+            {
+                await EmvDataHanldler(msrData);
+            });
         }
 
         public void Timeout(int erroCode)
         {
-            welcomeText.Text = "Timeout - message: " + ErrorCodeInfo.GetErrorCodeDescription(erroCode);
+            welcomeText.Text = "Timeout - message: " + ErrorCodeInfo.GetErrorCodeDescription(erroCode) + " Devices scanned: " + devicesScanned;
             Log.Info("Timeout", "Message..." + ErrorCodeInfo.GetErrorCodeDescription(erroCode));
-            hanlder.PostDelayed(() => {
-                ReleaseDevice();
-            }, 5000);
+            var message = ErrorCodeInfo.GetErrorCodeDescription(erroCode).ToLower();
+            switch (message)
+            {
+                case "card inserted":
+                    break;
+                case "0xee40: unknown error code":
+                case "0x0018: timeout: msr swipe":
+                    ReleaseDevice();
+                    break;
+
+            }
+            //hanlder.PostDelayed(() => {
+            //    ReleaseDevice();
+            //}, 5000);
 
         }
 
@@ -485,10 +599,19 @@ namespace UNIVERSALSDK.Droid
             Log.Info("ReleaseDevice", "Releasing...");
             if (myVP3300Reader != null)
             {
+
                 myVP3300Reader.UnregisterListen();
                 myVP3300Reader.Release();
-                //myVP3300Reader = null;
+                myVP3300Reader = null;
             }
+        }
+
+        void RetryTransaction()
+        {
+            myVP3300Reader.Device_cancelTransaction();
+            var errorCode = myVP3300Reader.Device_startTransaction(1, 0, 0, 30, null);
+            var message = myVP3300Reader.Device_getResponseCodeString(errorCode);
+            welcomeText.Text += "Transaction Results: " + message;
         }
 
         public class BLEGattCallBack : BluetoothGattCallback
@@ -520,15 +643,20 @@ namespace UNIVERSALSDK.Droid
 
                 //if (!string.IsNullOrEmpty(result.Device.Name) && result.Device.Name.ToUpper().Contains("IDTECH"))
                 //if (result.Device.Address == "00:1C:97:18:77:34")
-                hanlder.Post(() =>
-                {
+
                     Log.Info("OnScanResult", "Device..." + (string.IsNullOrEmpty(r.Device.Address) ? r.Device.Name : r.Device.Address));
                     Log.Info("OnScanResult", "Device Name..." + (string.IsNullOrEmpty(r.Device.Address) ? r.Device.Name : r.Device.Name));
                     System.Diagnostics.Debug.WriteLine("    Name " + r.Device.Name);
                     System.Diagnostics.Debug.WriteLine("    Address " + r.Device.Address);
-                    
+
+                    devicesScanned++;
+
+                    System.Diagnostics.Debug.WriteLine("    devicesScanned: " + devicesScanned);
+
                     if (r.Device.Address.StartsWith(OUI))
                     {
+                        AddDeviceToFilter(r);
+
                         if (!_registered)
                         {
                             System.Diagnostics.Debug.WriteLine("**************FOUND*************");
@@ -537,20 +665,11 @@ namespace UNIVERSALSDK.Droid
                             System.Diagnostics.Debug.WriteLine("    tXPower " + r.ScanRecord.TxPowerLevel);
                             System.Diagnostics.Debug.WriteLine("    Rssi " + r.Rssi);
 
-                            var editor = sharedPre.Edit();
-                            string deviceAddress = sharedPre.GetString(DEVICE_ADDRESS, "");
-
-                            if (string.IsNullOrEmpty(deviceAddress))
-                                editor.PutString(DEVICE_ADDRESS, r.Device.Address);
-                            else
-                            {
-                                var stringToAdd = string.Format("{0}|{1}", deviceAddress, r.Device.Address);
-                                editor.PutString(DEVICE_ADDRESS, stringToAdd);
-                            }
+                            bleScanner.StopScan(mLeScanCallback);
 
                             _device = r.Device;
                             var callBack = new BLEGattCallBack();
-                            var gatt = _device.ConnectGatt(Application.Context, true, callBack);
+                            gatt = _device.ConnectGatt(Application.Context, true, callBack);
 
                             var uuids = r.ScanRecord.ServiceUuids;
                             Log.Info("OnScanResult", "Device found " + r.Device.Name);
@@ -558,10 +677,22 @@ namespace UNIVERSALSDK.Droid
                             BluetoothLEController.SetBluetoothDevice(r.Device);
                             _registered = true;
                             RegisterBLE?.Invoke(uuids);
-
                         }
                     }
-                });
+            }
+
+            private static void AddDeviceToFilter(ScanResult r)
+            {
+                var editor = sharedPre.Edit();
+                string deviceAddress = sharedPre.GetString(DEVICE_ADDRESS, "");
+
+                if (string.IsNullOrEmpty(deviceAddress))
+                    editor.PutString(DEVICE_ADDRESS, r.Device.Address);
+                else if (!deviceAddress.Contains(r.Device.Address))
+                {
+                    var stringToAdd = string.Format("{0}|{1}", deviceAddress, r.Device.Address);
+                    editor.PutString(DEVICE_ADDRESS, stringToAdd);
+                }
             }
 
             public override void OnScanFailed([GeneratedEnum] ScanFailure errorCode)
@@ -585,11 +716,5 @@ namespace UNIVERSALSDK.Droid
             }
         }
     }
-
-
-
-   
-
-
 }
 
