@@ -6,7 +6,12 @@
     android:layout_height="match_parent"
     app:layout_behavior="@string/appbar_scrolling_view_behavior"
     tools:showIn="@layout/activity_main">
-
+	<TextView
+		android:id="@+id/countDown"
+		android:layout_width="383.5dp"
+		android:layout_height="218.0dp"
+		android:gravity="bottom|center"
+		android:text="0"/>
     <TextView
 		android:id="@+id/welcomeText"
         android:layout_width="wrap_content"
