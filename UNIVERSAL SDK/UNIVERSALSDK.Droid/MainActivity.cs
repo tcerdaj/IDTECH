@@ -50,6 +50,9 @@ namespace UNIVERSALSDK.Droid
         BLEGattCallBack bLEGattCallBack;
         System.Timers.Timer _timer;
         private int _countSeconds;
+        static ListView devices;
+        static List<string> deviceList;
+        static ArrayAdapter deviceAdapter;
 
         protected override void OnCreate(Bundle savedInstanceState)
         {
@@ -79,7 +82,13 @@ namespace UNIVERSALSDK.Droid
             _timer.Elapsed -= _timer_Elapsed;
             _timer.Elapsed += _timer_Elapsed;
             _timer.Interval = 1000;
-            
+            devices = FindViewById<ListView>(Resource.Id.devices);
+
+            deviceList = new List<string>() { "Apple", "banana", "Grape"};
+            deviceAdapter = new ArrayAdapter(this,
+                Resource.Id.list_item, deviceList);
+
+            devices.Adapter = deviceAdapter;
 
             Android.Support.V7.Widget.Toolbar toolbar = FindViewById<Android.Support.V7.Widget.Toolbar>(Resource.Id.toolbar);
             SetSupportActionBar(toolbar);
@@ -457,6 +466,7 @@ namespace UNIVERSALSDK.Droid
                     }
                     else
                     {
+                        welcomeText.Text = "Transaction completed";
                         await System.Threading.Tasks.Task.Delay(2000);
                         Log.Info("EmvTransactionData", "Transaction completed");
                         transactionCompleted = true;
@@ -529,6 +539,7 @@ namespace UNIVERSALSDK.Droid
                     }
                     else
                     {
+                        welcomeText.Text = "Transaction completed";
                         await System.Threading.Tasks.Task.Delay(2000);
                         Log.Info("EmvTransactionData", "Transaction completed");
                         transactionCompleted = true;
@@ -708,6 +719,9 @@ namespace UNIVERSALSDK.Droid
                     Log.Info("OnScanResult", "Device Name..." + (string.IsNullOrEmpty(r.Device.Address) ? r.Device.Name : r.Device.Name));
                     System.Diagnostics.Debug.WriteLine("    Name " + r.Device.Name);
                     System.Diagnostics.Debug.WriteLine("    Address " + r.Device.Address);
+
+                    deviceList.Add(r.Device.Name == string.Empty ? r.Device.Address : r.Device.Name);
+
                     if (_registered)
                     {
                         bleScanner.StopScan(mLeScanCallback);
@@ -718,7 +732,7 @@ namespace UNIVERSALSDK.Droid
                     {
                         devicesScanned++;
 
-                        welcomeText.Text = "Scanning..." + devicesScanned;
+                        welcomeText.Text = string.Format("Scanning...{0} devices \n device address {1}", devicesScanned, r.Device.Address);
 
                         System.Diagnostics.Debug.WriteLine("    devicesScanned: " + devicesScanned);
                     }
@@ -745,9 +759,9 @@ namespace UNIVERSALSDK.Droid
                             RegisterBLE?.Invoke(uuids);
                         }
                     }
+
+                    deviceAdapter.NotifyDataSetChanged();
                 });
-
-
             }
 
             private static void AddDeviceToFilter(ScanResult r)
