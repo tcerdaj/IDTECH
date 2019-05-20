@@ -247,14 +247,13 @@ namespace UNIVERSALSDK.Droid
             Log.Info("RegisterBLE", "RegisterBLE");
             isScanning = false;
 
-            gatt = _device.ConnectGatt(Application.Context, true, bLEGattCallBack);
+            gatt = _device.ConnectGatt(Application.Context, false, bLEGattCallBack);
 
             Com.Idtechproducts.Device.Common.BLEDeviceName = _device.Name;
             BluetoothLEController.SetBluetoothDevice(_device);
 
-            myVP3300Reader.Device_connect();
-
             myVP3300Reader.RegisterListen();
+
         }
 
         private void SetFilters(IList<ParcelUuid> uuids)
