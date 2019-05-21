@@ -39,7 +39,7 @@ namespace UNIVERSALSDK.Droid
         static TextView welcomeText, countDown;
         ImageView batteryLifeView;
         static Android.OS.Handler hanlder;
-        bool isScanning, transactionCompleted;
+        static bool isScanning, transactionCompleted;
         List<ScanFilter> filters;
         private Handler mStartGattHandler = new Handler();
         static BluetoothDevice _device;
@@ -99,6 +99,7 @@ namespace UNIVERSALSDK.Droid
             deviceAdapter = new ArrayAdapter<string>(this, Resource.Layout.list_item, deviceList);
 
             devices.Adapter = deviceAdapter;
+            devices.Visibility = ViewStates.Invisible;
         }
 
         private void _timer_Elapsed(object sender, System.Timers.ElapsedEventArgs e)
@@ -107,7 +108,12 @@ namespace UNIVERSALSDK.Droid
 
             if (_countSeconds >= 0)
             {
-                countDown.Text = string.Format("Remaining time {0}", _countSeconds);
+                string msg = "Remaining time {0}";
+
+                if (_countSeconds == 0)
+                    msg = "Remaining time {0} \n Total Devices found {1}";
+
+                countDown.Text = string.Format(msg, _countSeconds, deviceAdapter.Count);
 
                 System.Diagnostics.Debug.WriteLine("Counting..." + _countSeconds);
             }
@@ -247,6 +253,7 @@ namespace UNIVERSALSDK.Droid
                         {
                             bleScanner.StopScan(mLeScanCallback);
                             isScanning = false;
+                            gatt?.Disconnect();
                         }
                     }
                 }, timeout);
@@ -278,8 +285,8 @@ namespace UNIVERSALSDK.Droid
                     ScanSettings settings = new ScanSettings
                                                  .Builder()
                                                  .SetCallbackType(ScanCallbackType.AllMatches)
-                                                 .SetMatchMode(BluetoothScanMatchMode.Aggressive)
-                                                 .SetScanMode(Android.Bluetooth.LE.ScanMode.LowLatency)
+                                                 .SetMatchMode(BluetoothScanMatchMode.Sticky)
+                                                 .SetScanMode(Android.Bluetooth.LE.ScanMode.LowPower)
                                                  .Build();
 
                     isScanning = true;
@@ -444,19 +451,14 @@ namespace UNIVERSALSDK.Droid
             hanlder.Post(() =>
             {
                 Log.Info("DeviceDisconnected", "Disconnected");
-                gatt.Disconnect();
+
+                gatt?.Disconnect();
 
                 if (!isScanning && _device != null && _manager.GetConnectionState(_device, ProfileType.Gatt) != ProfileState.Connected)
                 {
                     welcomeText.Text = "Device Disconnected";
                     batteryLifeView.Visibility = ViewStates.Invisible;
                     ReleaseDevice();
-
-                    //if (gatt != null && _manager != null && _manager.GetConnectionState(gatt.Device, ProfileType.Gatt) == ProfileState.Connected)
-                    //{
-                    //    gatt?.Disconnect();
-                    //    myVP3300Reader = null;
-                    //}
                 }
             });
         }
@@ -755,27 +757,36 @@ namespace UNIVERSALSDK.Droid
             {
                 base.OnServicesDiscovered(gatt, status);
 
-                //var services = gatt.Services;
-                //foreach (var serv in services)
-                //{
-                    
-                //    var chs = serv.Characteristics;
+                var services = gatt.Services;
+                System.Diagnostics.Debug.WriteLine("*** DISCOVERING SERVICES ***");
 
-                //    foreach (var ch in chs)
-                //    {
-                //        gatt.SetCharacteristicNotification(ch, true);
-                //    }
-                //}
+                foreach (var serv in services)
+                {
+                    System.Diagnostics.Debug.WriteLine("    Service Id " + serv.Uuid);
+
+                    var chs = serv.Characteristics;
+
+                    foreach (var ch in chs)
+                    {
+                        System.Diagnostics.Debug.WriteLine("        characteristic Id " + ch.Uuid);
+                        System.Diagnostics.Debug.WriteLine("          Permissions " + ch.Permissions);
+
+                        foreach (var de in ch.Descriptors)
+                        {
+                            System.Diagnostics.Debug.WriteLine("          Descriptor Id " + de.Uuid);
+                            System.Diagnostics.Debug.WriteLine("          Permissions " + de.Permissions);
+                        }
+                        //gatt.SetCharacteristicNotification(ch, true);
+                    }
+                }
             }
 
             public override void OnConnectionStateChange(BluetoothGatt gatt, [GeneratedEnum] GattStatus status, [GeneratedEnum] ProfileState newState)
             {
                 base.OnConnectionStateChange(gatt, status, newState);
-                //if (newState == ProfileState.Connected)
-                //{
-                //    bleScanner.StopScan(mLeScanCallback);
-                //    gatt.DiscoverServices();
-                //}
+
+                if (newState == ProfileState.Connected)
+                   gatt.DiscoverServices();
             }
 
             
@@ -797,72 +808,72 @@ namespace UNIVERSALSDK.Droid
 
                 //if (!string.IsNullOrEmpty(result.Device.Name) && result.Device.Name.ToUpper().Contains("IDTECH"))
                 //if (result.Device.Address == "00:1C:97:18:77:34")
-                hanlder.Post(() =>
+
+                Log.Info("OnScanResult", "Device..." + (string.IsNullOrEmpty(r.Device.Address) ? r.Device.Name : r.Device.Address));
+                Log.Info("OnScanResult", "Device Name..." + (string.IsNullOrEmpty(r.Device.Address) ? r.Device.Name : r.Device.Name));
+                System.Diagnostics.Debug.WriteLine("    Name " + r.Device.Name);
+                System.Diagnostics.Debug.WriteLine("    Address " + r.Device.Address);
+
+                string device_ = string.IsNullOrEmpty(r.Device.Name) ? r.Device.Address : r.Device.Name;
+
+                if (!deviceList.Contains(device_))
                 {
-                    Log.Info("OnScanResult", "Device..." + (string.IsNullOrEmpty(r.Device.Address) ? r.Device.Name : r.Device.Address));
-                    Log.Info("OnScanResult", "Device Name..." + (string.IsNullOrEmpty(r.Device.Address) ? r.Device.Name : r.Device.Name));
-                    System.Diagnostics.Debug.WriteLine("    Name " + r.Device.Name);
-                    System.Diagnostics.Debug.WriteLine("    Address " + r.Device.Address);
+                    deviceList.Add(device_);
+                    deviceAdapter.Add(device_);
+                    deviceAdapter.NotifyDataSetChanged();
+                    devices.Visibility = ViewStates.Visible;
+                }
 
-                    string device_ = string.IsNullOrEmpty(r.Device.Name) ? r.Device.Address : r.Device.Name;
-
-                    if (!deviceList.Contains(device_))
-                    {
-                        deviceList.Add(device_);
-                        deviceAdapter.Add(device_);
-                        deviceAdapter.NotifyDataSetChanged();
-                    }
+                if (_registered || !isScanning)
+                {
+                    bleScanner.StopScan(mLeScanCallback);
 
                     if (_registered)
-                    {
-                        bleScanner.StopScan(mLeScanCallback);
                         welcomeText.Text = "Device Registered..." + r.Device.Name;
-                    }
-                    else
+                }
+                else
+                {
+                    devicesScanned++;
+
+                    welcomeText.Text = string.Format("Scanning...{0} \n device address {1}", devicesScanned, r.Device.Address);
+
+                    System.Diagnostics.Debug.WriteLine("    devicesScanned: " + devicesScanned);
+                }
+
+                if (r.Device.Address.StartsWith(OUI))
+                {
+                    //AddDeviceToFilter(r);
+                    bleScanner.StopScan(mLeScanCallback);
+                    isScanning = false;
+
+                    shouldTimeout = false;
+
+                    if (!_registered)
                     {
-                        devicesScanned++;
+                        _registered = true;
+                        System.Diagnostics.Debug.WriteLine("**************FOUND*************");
+                        System.Diagnostics.Debug.WriteLine("    Name " + r.Device.Name);
+                        System.Diagnostics.Debug.WriteLine("    Address " + r.Device.Address);
+                        System.Diagnostics.Debug.WriteLine("    tXPower " + r.ScanRecord.TxPowerLevel);
+                        System.Diagnostics.Debug.WriteLine("    Rssi " + r.Rssi);
 
-                        welcomeText.Text = string.Format("Scanning...{0} \n device address {1}", devicesScanned, r.Device.Address);
-
-                        System.Diagnostics.Debug.WriteLine("    devicesScanned: " + devicesScanned);
-                    }
-
-                    if (r.Device.Address.StartsWith(OUI))
-                    {
-                        //AddDeviceToFilter(r);
-                        bleScanner.StopScan(mLeScanCallback);
-
-                        shouldTimeout = false;
-
-                        if (!_registered)
+                        if (!deviceList.Contains(device_))
                         {
-                            _registered = true;
-                            System.Diagnostics.Debug.WriteLine("**************FOUND*************");
-                            System.Diagnostics.Debug.WriteLine("    Name " + r.Device.Name);
-                            System.Diagnostics.Debug.WriteLine("    Address " + r.Device.Address);
-                            System.Diagnostics.Debug.WriteLine("    tXPower " + r.ScanRecord.TxPowerLevel);
-                            System.Diagnostics.Debug.WriteLine("    Rssi " + r.Rssi);
-
-                            if (!deviceList.Contains(device_))
-                            {
-                                deviceList.Add(device_);
-                                deviceAdapter.Add(device_);
-                            }
-
-                            welcomeText.Text = "Device Found - " + r.Device.Name;
-
-                            _device = r.Device;
-                            r.Device.CreateBond();
-
-                            var uuids = r.ScanRecord.ServiceUuids;
-                            
-                            RegisterBLE?.Invoke(uuids);
-
-                            deviceAdapter.NotifyDataSetChanged();
+                            deviceList.Add(device_);
+                            deviceAdapter.Add(device_);
                         }
-                    }
 
-                });
+                        welcomeText.Text = "Device Found - " + r.Device.Name;
+
+                        r.Device.CreateBond();
+
+                        var uuids = r.ScanRecord.ServiceUuids;
+
+                        RegisterBLE?.Invoke(uuids);
+
+                        deviceAdapter.NotifyDataSetChanged();
+                    }
+                }
             }
 
             private static void AddDeviceToFilter(ScanResult r)
