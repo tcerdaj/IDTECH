@@ -118,6 +118,11 @@ namespace UNIVERSALSDK.Droid
 
 
         bool _lookSwipe;
+        /// <summary>
+        /// Start Scan button
+        /// </summary>
+        /// <param name="sender"></param>
+        /// <param name="eventArgs"></param>
         private void FabOnClick(object sender, EventArgs eventArgs)
         {
 
@@ -150,7 +155,8 @@ namespace UNIVERSALSDK.Droid
                 mBtAdapter = BluetoothAdapter.DefaultAdapter;
 
                 bleScanner = mBtAdapter.BluetoothLeScanner;
-                //ReleaseDevice();
+
+                ReleaseDevice();
 
                 myVP3300Reader = new IDT_VP3300(this, Application.Context);
 
@@ -315,6 +321,7 @@ namespace UNIVERSALSDK.Droid
             Com.Idtechproducts.Device.Common.BLEDeviceName = _device.Name;
             BluetoothLEController.SetBluetoothDevice(_device);
 
+            myVP3300Reader = myVP3300Reader?? new IDT_VP3300(this, Application.Context);
             myVP3300Reader.RegisterListen();
             gatt.Connect();
 
