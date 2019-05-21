@@ -23,6 +23,7 @@ using System.Runtime.Serialization.Formatters.Binary;
 using System.IO;
 using System.Text;
 using System.Threading;
+using System.Linq;
 
 namespace UNIVERSALSDK.Droid
 {
@@ -53,6 +54,8 @@ namespace UNIVERSALSDK.Droid
         static ListView devices;
         static List<string> deviceList;
         static ArrayAdapter deviceAdapter;
+        static bool shouldTimeout;
+        const string OUI = "00:1C:97"; // IDtech's MAC Address Organization\ally Unique Identifier
 
         protected override void OnCreate(Bundle savedInstanceState)
         {
@@ -69,7 +72,7 @@ namespace UNIVERSALSDK.Droid
 
             hanlder = new Handler();
             isScanning = false;
-
+            shouldTimeout = true;
              
             sharedPre = Application.Context.GetSharedPreferences(DEVICE_FILTERS, FileCreationMode.Private);
 
@@ -82,68 +85,101 @@ namespace UNIVERSALSDK.Droid
             _timer.Elapsed -= _timer_Elapsed;
             _timer.Elapsed += _timer_Elapsed;
             _timer.Interval = 1000;
-            devices = FindViewById<ListView>(Resource.Id.devices);
-
-            deviceList = new List<string>() { "Apple", "banana", "Grape"};
-            deviceAdapter = new ArrayAdapter(this,
-                Resource.Id.list_item, deviceList);
-
-            devices.Adapter = deviceAdapter;
 
             Android.Support.V7.Widget.Toolbar toolbar = FindViewById<Android.Support.V7.Widget.Toolbar>(Resource.Id.toolbar);
             SetSupportActionBar(toolbar);
 
             FloatingActionButton fab = FindViewById<FloatingActionButton>(Resource.Id.fab);
+
             fab.Click += FabOnClick;
+
+            devices = FindViewById<ListView>(Resource.Id.deviceList);
+
+            deviceList = new List<string>();
+            deviceAdapter = new ArrayAdapter<string>(this, Resource.Layout.list_item, deviceList);
+
+            devices.Adapter = deviceAdapter;
         }
 
         private void _timer_Elapsed(object sender, System.Timers.ElapsedEventArgs e)
         {
             _countSeconds--;
 
-            countDown.Text = string.Format("Remaining time {0}", _countSeconds);
+            if (_countSeconds >= 0)
+            {
+                countDown.Text = string.Format("Remaining time {0}", _countSeconds);
 
-            System.Diagnostics.Debug.WriteLine("Counting..." + _countSeconds);
+                System.Diagnostics.Debug.WriteLine("Counting..." + _countSeconds);
+            }
 
-            if (_countSeconds == 0)
+            if (_countSeconds <= 0 || (_device != null && _manager.GetConnectionState(_device, ProfileType.Gatt) == ProfileState.Connected))
                 _timer.Stop();
         }
 
+
+        bool _lookSwipe;
         private void FabOnClick(object sender, EventArgs eventArgs)
         {
-            view = (View)sender;
-            Snackbar.Make(view, "Scanning...", Snackbar.LengthLong)
-                .SetAction("Action", (Android.Views.View.IOnClickListener)null).Show();
 
-            welcomeText.Text = "";
-            transactionCompleted = false;
-
-            _manager = (BluetoothManager)Android.App.Application.Context.GetSystemService(Android.Content.Context.BluetoothService);
-
-            mBtAdapter = BluetoothAdapter.DefaultAdapter;
-
-            bleScanner = mBtAdapter.BluetoothLeScanner;
-            //ReleaseDevice();
-
-            myVP3300Reader = new IDT_VP3300(this, Application.Context);
-            
-
-            if (myVP3300Reader.Device_setDeviceType(DEVICE_TYPE.DeviceVp3300Bt))
+            try
             {
-                var REQUEST_ENABLE_BT = 1;
+                if (_lookSwipe || isScanning) return;
 
-                if (!mBtAdapter.IsEnabled)
+                _lookSwipe = true;
+
+                view = (View)sender;
+                Snackbar.Make(view, "Scanning...", Snackbar.LengthLong)
+                    .SetAction("Action", (Android.Views.View.IOnClickListener)null).Show();
+
+                welcomeText.Text = "Scanning... please wait.";
+                transactionCompleted = false;
+
+                _countSeconds = Convert.ToInt32(BLE_ScanTimeout / 1000);
+                isScanning = false;
+                shouldTimeout = true;
+
+                _timer = new System.Timers.Timer();
+                _timer.Elapsed -= _timer_Elapsed;
+                _timer.Elapsed += _timer_Elapsed;
+                _timer.Interval = 1000;
+
+                countDown.Text = string.Format("Remaining time {0}", _countSeconds);
+
+                _manager = (BluetoothManager)Android.App.Application.Context.GetSystemService(Android.Content.Context.BluetoothService);
+
+                mBtAdapter = BluetoothAdapter.DefaultAdapter;
+
+                bleScanner = mBtAdapter.BluetoothLeScanner;
+                //ReleaseDevice();
+
+                myVP3300Reader = new IDT_VP3300(this, Application.Context);
+
+                if (myVP3300Reader.Device_setDeviceType(DEVICE_TYPE.DeviceVp3300Bt))
                 {
-                    var enableBtIntent = new Intent(BluetoothAdapter.ActionRequestEnable);
-                    StartActivityForResult(enableBtIntent, REQUEST_ENABLE_BT);
-                }
+                    var REQUEST_ENABLE_BT = 1;
 
-                mLeScanCallback = new BLEScanCallback() { RegisterBLE = RegisterBLE, _registered = false };
+                    if (!mBtAdapter.IsEnabled)
+                    {
+                        var enableBtIntent = new Intent(BluetoothAdapter.ActionRequestEnable);
+                        StartActivityForResult(enableBtIntent, REQUEST_ENABLE_BT);
+                    }
 
-                if (_device != null && _manager.GetConnectionState(_device, ProfileType.Gatt) == ProfileState.Connected)
-                    RegisterBLE(null);
-                else
+                    deviceAdapter.Clear();
+                    deviceAdapter.NotifyDataSetChanged();
+
+                    mLeScanCallback = new BLEScanCallback() { RegisterBLE = RegisterBLE, _registered = false };
+
                     scanLeDevice(true, BLE_ScanTimeout);
+    
+                }
+            }
+            catch (Exception ex)
+            {
+                welcomeText.Text = ex.Message;
+            }
+            finally
+            {
+                _lookSwipe = false;
             }
         }
 
@@ -151,7 +187,7 @@ namespace UNIVERSALSDK.Droid
         {
             hanlder.Post(() =>
             {
-                _countSeconds = 30;
+                
                 _timer.Start();
                 countDown.Visibility = ViewStates.Visible;
 
@@ -190,12 +226,47 @@ namespace UNIVERSALSDK.Droid
                 }
 
                 var handler = new Android.OS.Handler();
-                welcomeText.Text = "Scanning...";
+                
                 Log.Info("scanLeDevice", "Scanning...");
                 batteryLifeView.Visibility = ViewStates.Invisible;
 
-                if (enable)
+                handler.PostDelayed(() =>
                 {
+                    if (myVP3300Reader != null && !myVP3300Reader.Device_isConnected() && !transactionCompleted && shouldTimeout)
+                    {
+                        welcomeText.Text = "Timeout - Devices Scanned: " + devicesScanned; ;
+                        Snackbar.Make(view, "Timeout " + devicesScanned + "- Devices", Snackbar.LengthLong)
+                    .SetAction("Action", (Android.Views.View.IOnClickListener)null).Show();
+                        if (isScanning)
+                        {
+                            bleScanner.StopScan(mLeScanCallback);
+                            isScanning = false;
+                        }
+                    }
+                }, timeout);
+
+
+                if (_device != null && _manager.GetConnectionState(_device, ProfileType.Gatt) == ProfileState.Connected)
+                {
+                    welcomeText.Text = "Connecting... \n Device: " + _device.Name;
+                    RegisterBLE(null);
+                }
+                else if (_manager.Adapter.BondedDevices.Any(x => x.Address.StartsWith(OUI)))
+                {
+                    _device = _manager.Adapter.BondedDevices.FirstOrDefault(x => x.Address.StartsWith(OUI));
+                    var deviceState = _manager.GetConnectionState(_device, ProfileType.Gatt);
+
+                    if (_device != null)
+                    {
+                        welcomeText.Text = "Connecting... \n Device: " + _device.Name; ;
+                        RegisterBLE(null);
+                    }
+                }
+                else if (enable)
+                {
+
+                    welcomeText.Text = "Scanning...";
+
                     var scanFilter = new ScanFilter.Builder().Build();
                     bleScanner.FlushPendingScanResults(mLeScanCallback);
                     ScanSettings settings = new ScanSettings
@@ -203,33 +274,16 @@ namespace UNIVERSALSDK.Droid
                                                  .SetCallbackType(ScanCallbackType.AllMatches)
                                                  .SetMatchMode(BluetoothScanMatchMode.Aggressive)
                                                  .SetScanMode(Android.Bluetooth.LE.ScanMode.LowLatency)
-                                                 //.SetReportDelay(timeout)
                                                  .Build();
-
-                    handler.PostDelayed(() =>
-                    {
-                        if (myVP3300Reader != null && !myVP3300Reader.Device_isConnected() && !transactionCompleted)
-                        {
-                            welcomeText.Text = "Timeout - Devices Scanned: " + devicesScanned; ;
-                            Snackbar.Make(view, "Timeout " + devicesScanned + "- Devices", Snackbar.LengthLong)
-                        .SetAction("Action", (Android.Views.View.IOnClickListener)null).Show();
-                            if (isScanning)
-                            {
-                                bleScanner.StopScan(mLeScanCallback);
-                                isScanning = false;
-                            }
-                        }
-                    }, timeout);
 
                     isScanning = true;
                     var success = _manager.Adapter.StartDiscovery();
                     devicesScanned = 0;
                     bleScanner.StartScan(new List<ScanFilter> { scanFilter }, settings, mLeScanCallback);
                 }
-                else
+                else if(isScanning)
                 {
-                    if (isScanning)
-                        bleScanner.StopScan(mLeScanCallback);
+                    bleScanner.StopScan(mLeScanCallback);
                 }
             });
         }
@@ -262,6 +316,7 @@ namespace UNIVERSALSDK.Droid
             BluetoothLEController.SetBluetoothDevice(_device);
 
             myVP3300Reader.RegisterListen();
+            gatt.Connect();
 
         }
 
@@ -340,8 +395,12 @@ namespace UNIVERSALSDK.Droid
         {
             hanlder.Post(async () =>
             {
-                welcomeText.Text = "Device Connected";
+                var sb = new Java.Lang.StringBuilder();
+                var version = myVP3300Reader.Device_getFirmwareVersion(sb);
+                welcomeText.Text = string.Format("Device Connected \n firmeware:{0} \n version: {1} ", sb.ToString(), version);
+
                 Log.Info("DeviceConnected", "Connected");
+                Log.Info("Device", welcomeText.Text);
                 var data = new ResDataStruct();
                 var result = myVP3300Reader.Device_sendDataCommand("F002", false, null, data);
                 if (data.ResData != null && data.ResData.Count > 0)
@@ -354,7 +413,7 @@ namespace UNIVERSALSDK.Droid
                         level = "Low";
 
                     //welcomeText.Text = "Battery level " + level;
-                    
+
                     int image = level == "Full" ? Resource.Mipmap.full : level == "Low" ? Resource.Mipmap.low : Resource.Mipmap.medium;
                     batteryLifeView.SetImageResource(image);
                     await System.Threading.Tasks.Task.Delay(5000);
@@ -362,11 +421,15 @@ namespace UNIVERSALSDK.Droid
 
                 batteryLifeView.Visibility = ViewStates.Visible;
                 countDown.Visibility = ViewStates.Invisible;
-
-                var errorCode = myVP3300Reader.Device_startTransaction(1, 0, 0, 30, null);
-                var message = myVP3300Reader.Device_getResponseCodeString(errorCode);
-                welcomeText.Text += "Transaction Results: " + message;
+                StartTransaction();
             });
+        }
+
+        private void StartTransaction()
+        {
+            var errorCode = myVP3300Reader.Device_startTransaction(1, 0, 0, 30, null);
+            var message = myVP3300Reader.Device_getResponseCodeString(errorCode);
+            welcomeText.Text += "Transaction Results: " + message;
         }
 
         public void DeviceDisconnected()
@@ -374,8 +437,9 @@ namespace UNIVERSALSDK.Droid
             hanlder.Post(() =>
             {
                 Log.Info("DeviceDisconnected", "Disconnected");
+                gatt.Disconnect();
 
-                if (!isScanning)
+                if (!isScanning && _device != null && _manager.GetConnectionState(_device, ProfileType.Gatt) != ProfileState.Connected)
                 {
                     welcomeText.Text = "Device Disconnected";
                     batteryLifeView.Visibility = ViewStates.Invisible;
@@ -452,6 +516,8 @@ namespace UNIVERSALSDK.Droid
 
                     welcomeText.Text = detail;
                     Log.Info("EmvTransactionData", detail);
+
+                    var responseString = myVP3300Reader.Device_getResponseCodeString(emvData.Result);
 
                     if (emvData.Result == IDTEMVData.GoOnline)
                     {
@@ -537,6 +603,16 @@ namespace UNIVERSALSDK.Droid
                         //Auto Authenticate
                         myVP3300Reader.Emv_authenticateTransaction(null);
                     }
+                    else if (emvData.Result == 10)
+                    {
+                        welcomeText.Text = "Please Swipe or insert card";
+                        StartTransaction();
+                    }
+                    else if (emvData.Result == IDTEMVData.ApprovedOffline)
+                    {
+                        welcomeText.Text = "USE CHIP READER";
+                        StartTransaction();
+                    }
                     else
                     {
                         welcomeText.Text = "Transaction completed";
@@ -564,7 +640,7 @@ namespace UNIVERSALSDK.Droid
         {
             hanlder.Post(async () =>
             {
-                welcomeText.Text = "Feedback: " + lines[0];
+                welcomeText.Text = lines[0];
                 Log.Info("LcdDisplay", lines[0]);
 
                 if (mode == 0x01) //Menu Display
@@ -592,7 +668,8 @@ namespace UNIVERSALSDK.Droid
             hanlder.Post(() =>
             {
                 Log.Info("TransactionFeedBack", p1[0]);
-                welcomeText.Text = "Transaction FeedBack: " + p1[0];
+                System.Diagnostics.Debug.WriteLine(string.Format("*** po {0} \n p1 {1}, p2 {2}, p3 {3}, p4 {4} ***", p0, p1.ToString(), p2, p3.ToString(), p4 ));
+                welcomeText.Text =  p1[0];
             });
         }
 
@@ -698,7 +775,7 @@ namespace UNIVERSALSDK.Droid
         }
         public class BLEScanCallback : Android.Bluetooth.LE.ScanCallback
         {
-            const string OUI = "00:1C:97"; // IDtech's MAC Address Organizationally Unique Identifier
+            
             public Action<IList<ParcelUuid>> RegisterBLE { get; set; }
             public bool _registered = false;
 
@@ -720,19 +797,25 @@ namespace UNIVERSALSDK.Droid
                     System.Diagnostics.Debug.WriteLine("    Name " + r.Device.Name);
                     System.Diagnostics.Debug.WriteLine("    Address " + r.Device.Address);
 
-                    deviceList.Add(r.Device.Name == string.Empty ? r.Device.Address : r.Device.Name);
+                    string device_ = string.IsNullOrEmpty(r.Device.Name) ? r.Device.Address : r.Device.Name;
+
+                    if (!deviceList.Contains(device_))
+                    {
+                        deviceList.Add(device_);
+                        deviceAdapter.Add(device_);
+                        deviceAdapter.NotifyDataSetChanged();
+                    }
 
                     if (_registered)
                     {
                         bleScanner.StopScan(mLeScanCallback);
-
                         welcomeText.Text = "Device Registered..." + r.Device.Name;
                     }
                     else
                     {
                         devicesScanned++;
 
-                        welcomeText.Text = string.Format("Scanning...{0} devices \n device address {1}", devicesScanned, r.Device.Address);
+                        welcomeText.Text = string.Format("Scanning...{0} \n device address {1}", devicesScanned, r.Device.Address);
 
                         System.Diagnostics.Debug.WriteLine("    devicesScanned: " + devicesScanned);
                     }
@@ -740,6 +823,9 @@ namespace UNIVERSALSDK.Droid
                     if (r.Device.Address.StartsWith(OUI))
                     {
                         //AddDeviceToFilter(r);
+                        bleScanner.StopScan(mLeScanCallback);
+
+                        shouldTimeout = false;
 
                         if (!_registered)
                         {
@@ -750,17 +836,25 @@ namespace UNIVERSALSDK.Droid
                             System.Diagnostics.Debug.WriteLine("    tXPower " + r.ScanRecord.TxPowerLevel);
                             System.Diagnostics.Debug.WriteLine("    Rssi " + r.Rssi);
 
+                            if (!deviceList.Contains(device_))
+                            {
+                                deviceList.Add(device_);
+                                deviceAdapter.Add(device_);
+                            }
+
                             welcomeText.Text = "Device Found - " + r.Device.Name;
 
                             _device = r.Device;
+                            r.Device.CreateBond();
 
                             var uuids = r.ScanRecord.ServiceUuids;
                             
                             RegisterBLE?.Invoke(uuids);
+
+                            deviceAdapter.NotifyDataSetChanged();
                         }
                     }
 
-                    deviceAdapter.NotifyDataSetChanged();
                 });
             }
 
