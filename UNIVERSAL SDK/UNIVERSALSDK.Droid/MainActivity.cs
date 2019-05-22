@@ -26,6 +26,7 @@ using System.Threading;
 using System.Linq;
 using Com.Idtechproducts.Device.Audiojack.Tools;
 using Com.Dbconnection.Dblibrarybeta;
+using Android.Database;
 
 namespace UNIVERSALSDK.Droid
 {
@@ -105,6 +106,10 @@ namespace UNIVERSALSDK.Droid
             deviceList = new List<string>();
             deviceAdapter = new ArrayAdapter<string>(this, Resource.Layout.list_item, deviceList);
 
+            var dso = new DataSetObserverDelegate();
+
+            deviceAdapter.RegisterDataSetObserver(dso);
+
             devices.Adapter = deviceAdapter;
             devices.Visibility = ViewStates.Invisible;
             profileManager = new ProfileManager(this);
@@ -129,7 +134,7 @@ namespace UNIVERSALSDK.Droid
             }
 
             device = new IDT_VP3300(this, Application.Context);
-            profileManager.DoGet();
+            //profileManager.DoGet();
             device.Log_setVerboseLoggingEnable(true);
             fwTool = new FirmwareUpdateTool(this, Application.Context);
         }
@@ -1146,6 +1151,15 @@ namespace UNIVERSALSDK.Droid
             if (val == IDTEMVData.Unkonwn) return "UNKONWN";
             return "";
         }
+
+        public class DataSetObserverDelegate : DataSetObserver
+        {
+            public override void OnChanged()
+            {
+                base.OnChanged();
+                devices.SetSelection(deviceAdapter.Count - 1);
+            }
+        }
         public class BLEGattCallBack : BluetoothGattCallback
         {
             public override void OnServicesDiscovered(BluetoothGatt gatt, [GeneratedEnum] GattStatus status)
@@ -1216,7 +1230,6 @@ namespace UNIVERSALSDK.Droid
                     deviceList.Add(device_);
                     deviceAdapter.Add(device_);
                     deviceAdapter.NotifyDataSetChanged();
-                    devices.Visibility = ViewStates.Visible;
                 }
 
                 if (_registered || !isScanning)
