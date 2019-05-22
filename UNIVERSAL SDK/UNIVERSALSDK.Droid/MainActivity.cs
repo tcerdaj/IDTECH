@@ -24,14 +24,15 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using System.Linq;
+using Com.Idtechproducts.Device.Audiojack.Tools;
 
 namespace UNIVERSALSDK.Droid
 {
     [Activity(Label = "@string/app_name", Theme = "@style/AppTheme.NoActionBar", MainLauncher = true)]
     public class MainActivity : AppCompatActivity, IOnReceiverListener
     {
-        private IDT_VP3300 myVP3300Reader = null;
-        private BluetoothAdapter mBtAdapter = null;
+        private IDT_VP3300 device;
+        private BluetoothAdapter mBtAdapter;
         private long BLE_ScanTimeout = 30000; //in milliseconds
         static BLEScanCallback mLeScanCallback;
         static BluetoothLeScanner bleScanner;
@@ -56,7 +57,8 @@ namespace UNIVERSALSDK.Droid
         static ArrayAdapter deviceAdapter;
         static bool shouldTimeout;
         const string OUI = "00:1C:97"; // IDtech's MAC Address Organization\ally Unique Identifier
-
+        FirmwareUpdateTool fmTool;
+        //ProfileManager profileManager;
         protected override void OnCreate(Bundle savedInstanceState)
         {
             base.OnCreate(savedInstanceState);
@@ -67,6 +69,7 @@ namespace UNIVERSALSDK.Droid
             welcomeText.Text = "Swipe payment";
             countDown = (TextView)FindViewById(Resource.Id.countDown);
             countDown.Visibility = ViewStates.Invisible;
+
 
             Log.Info("Initialize", "Init...");
 
@@ -100,6 +103,18 @@ namespace UNIVERSALSDK.Droid
 
             devices.Adapter = deviceAdapter;
             devices.Visibility = ViewStates.Invisible;
+        }
+
+        void InitializeReader()
+        {
+            if (device != null)
+            {
+                releaseSDK();
+            }
+
+            device = new IDT_VP3300(this, Application.Context);
+
+
         }
 
         private void _timer_Elapsed(object sender, System.Timers.ElapsedEventArgs e)
@@ -162,11 +177,11 @@ namespace UNIVERSALSDK.Droid
 
                 bleScanner = mBtAdapter.BluetoothLeScanner;
 
-                ReleaseDevice();
+                //ReleaseDevice();
 
-                myVP3300Reader = new IDT_VP3300(this, Application.Context);
+                
 
-                if (myVP3300Reader.Device_setDeviceType(DEVICE_TYPE.DeviceVp3300Bt))
+                if (device.Device_setDeviceType(DEVICE_TYPE.DeviceVp3300Bt))
                 {
                     var REQUEST_ENABLE_BT = 1;
 
@@ -244,7 +259,7 @@ namespace UNIVERSALSDK.Droid
 
                 handler.PostDelayed(() =>
                 {
-                    if (myVP3300Reader != null && !myVP3300Reader.Device_isConnected() && !transactionCompleted && shouldTimeout)
+                    if (device != null && !device.Device_isConnected() && !transactionCompleted && shouldTimeout)
                     {
                         welcomeText.Text = "Timeout - Devices Scanned: " + devicesScanned; ;
                         Snackbar.Make(view, "Timeout " + devicesScanned + "- Devices", Snackbar.LengthLong)
@@ -328,8 +343,8 @@ namespace UNIVERSALSDK.Droid
             Com.Idtechproducts.Device.Common.BLEDeviceName = _device.Name;
             BluetoothLEController.SetBluetoothDevice(_device);
 
-            myVP3300Reader = myVP3300Reader?? new IDT_VP3300(this, Application.Context);
-            myVP3300Reader.RegisterListen();
+            device = device?? new IDT_VP3300(this, Application.Context);
+            device.RegisterListen();
             gatt.Connect();
 
         }
@@ -410,13 +425,13 @@ namespace UNIVERSALSDK.Droid
             hanlder.Post(async () =>
             {
                 var sb = new Java.Lang.StringBuilder();
-                var version = myVP3300Reader.Device_getFirmwareVersion(sb);
+                var version = device.Device_getFirmwareVersion(sb);
                 welcomeText.Text = string.Format("Device Connected \n firmeware:{0} \n version: {1} ", sb.ToString(), version);
 
                 Log.Info("DeviceConnected", "Connected");
                 Log.Info("Device", welcomeText.Text);
                 var data = new ResDataStruct();
-                var result = myVP3300Reader.Device_sendDataCommand("F002", false, null, data);
+                var result = device.Device_sendDataCommand("F002", false, null, data);
                 if (data.ResData != null && data.ResData.Count > 0)
                 {
                     var batteryLevel = data.ResData[0];
@@ -441,8 +456,8 @@ namespace UNIVERSALSDK.Droid
 
         private void StartTransaction()
         {
-            var errorCode = myVP3300Reader.Device_startTransaction(1, 0, 0, 30, null);
-            var message = myVP3300Reader.Device_getResponseCodeString(errorCode);
+            var errorCode = device.Device_startTransaction(1, 0, 0, 30, null);
+            var message = device.Device_getResponseCodeString(errorCode);
             welcomeText.Text += "Transaction Results: " + message;
         }
 
@@ -458,7 +473,7 @@ namespace UNIVERSALSDK.Droid
                 {
                     welcomeText.Text = "Device Disconnected";
                     batteryLifeView.Visibility = ViewStates.Invisible;
-                    ReleaseDevice();
+                    releaseSDK();
                 }
             });
         }
@@ -526,18 +541,18 @@ namespace UNIVERSALSDK.Droid
                     welcomeText.Text = detail;
                     Log.Info("EmvTransactionData", detail);
 
-                    var responseString = myVP3300Reader.Device_getResponseCodeString(emvData.Result);
+                    var responseString = device.Device_getResponseCodeString(emvData.Result);
 
                     if (emvData.Result == IDTEMVData.GoOnline)
                     {
                         //Auto Complete
                         byte[] response = new byte[] { 0x30, 0x30 };
-                        myVP3300Reader.Emv_completeTransaction(false, response, null, null, null);
+                        device.Emv_completeTransaction(false, response, null, null, null);
                     }
                     else if (emvData.Result == IDTEMVData.StartTransSuccess)
                     {
                         //Auto Authenticate
-                        myVP3300Reader.Emv_authenticateTransaction(null);
+                        device.Emv_authenticateTransaction(null);
                     }
                     else
                     {
@@ -545,7 +560,7 @@ namespace UNIVERSALSDK.Droid
                         await System.Threading.Tasks.Task.Delay(2000);
                         Log.Info("EmvTransactionData", "Transaction completed");
                         transactionCompleted = true;
-                        ReleaseDevice();
+                        //ReleaseDevice();
                     }
                 }
             }
@@ -605,12 +620,12 @@ namespace UNIVERSALSDK.Droid
                     {
                         //Auto Complete
                         byte[] response = new byte[] { 0x30, 0x30 };
-                        myVP3300Reader.Emv_completeTransaction(false, response, null, null, null);
+                        device.Emv_completeTransaction(false, response, null, null, null);
                     }
                     else if (emvData.Result == IDTEMVData.StartTransSuccess)
                     {
                         //Auto Authenticate
-                        myVP3300Reader.Emv_authenticateTransaction(null);
+                        device.Emv_authenticateTransaction(null);
                     }
                     else if (emvData.Result == 10)
                     {
@@ -628,7 +643,7 @@ namespace UNIVERSALSDK.Droid
                         await System.Threading.Tasks.Task.Delay(2000);
                         Log.Info("EmvTransactionData", "Transaction completed");
                         transactionCompleted = true;
-                        ReleaseDevice();
+                        //ReleaseDevice();
                     }
                 }
             }
@@ -655,19 +670,19 @@ namespace UNIVERSALSDK.Droid
                 if (mode == 0x01) //Menu Display
                 {
                     //automatically select 1st application
-                    myVP3300Reader.Emv_lcdControlResponse((sbyte)mode, (sbyte)0x01);
+                    device.Emv_lcdControlResponse((sbyte)mode, (sbyte)0x01);
                 }
                 else if (mode == 0x08) //Language Menu Display
                 {
                     //automatically select first language
-                    myVP3300Reader.Emv_lcdControlResponse((sbyte)mode, (sbyte)0x01);
+                    device.Emv_lcdControlResponse((sbyte)mode, (sbyte)0x01);
                 }
                 else if (lines[0].ToLower().Contains("timeout"))
                 {
                     ResDataStruct toData = new ResDataStruct();
                     welcomeText.Text = "Feedback: " + lines[0];
                     await System.Threading.Tasks.Task.Delay(2000);
-                    ReleaseDevice();
+                    //ReleaseDevice();
                 }
             });
         }
@@ -731,23 +746,21 @@ namespace UNIVERSALSDK.Droid
 
         }
 
-        void ReleaseDevice()
+        void releaseSDK()
         {
             Log.Info("ReleaseDevice", "Releasing...");
-            if (myVP3300Reader != null)
+            if (device != null)
             {
-
-                myVP3300Reader.UnregisterListen();
-                myVP3300Reader.Release();
-                myVP3300Reader = null;
+                device.UnregisterListen();
+                device.Release();
             }
         }
 
         void RetryTransaction()
         {
-            myVP3300Reader.Device_cancelTransaction();
-            var errorCode = myVP3300Reader.Device_startTransaction(1, 0, 0, 30, null);
-            var message = myVP3300Reader.Device_getResponseCodeString(errorCode);
+            device.Device_cancelTransaction();
+            var errorCode = device.Device_startTransaction(1, 0, 0, 30, null);
+            var message = device.Device_getResponseCodeString(errorCode);
             welcomeText.Text += "Transaction Results: " + message;
         }
 
@@ -757,36 +770,36 @@ namespace UNIVERSALSDK.Droid
             {
                 base.OnServicesDiscovered(gatt, status);
 
-                var services = gatt.Services;
-                System.Diagnostics.Debug.WriteLine("*** DISCOVERING SERVICES ***");
+                //var services = gatt.Services;
+                //System.Diagnostics.Debug.WriteLine("*** DISCOVERING SERVICES ***");
 
-                foreach (var serv in services)
-                {
-                    System.Diagnostics.Debug.WriteLine("    Service Id " + serv.Uuid);
+                //foreach (var serv in services)
+                //{
+                //    System.Diagnostics.Debug.WriteLine("    Service Id " + serv.Uuid);
 
-                    var chs = serv.Characteristics;
+                //    var chs = serv.Characteristics;
 
-                    foreach (var ch in chs)
-                    {
-                        System.Diagnostics.Debug.WriteLine("        characteristic Id " + ch.Uuid);
-                        System.Diagnostics.Debug.WriteLine("          Permissions " + ch.Permissions);
+                //    foreach (var ch in chs)
+                //    {
+                //        System.Diagnostics.Debug.WriteLine("        characteristic Id " + ch.Uuid);
+                //        System.Diagnostics.Debug.WriteLine("          Permissions " + ch.Permissions);
 
-                        foreach (var de in ch.Descriptors)
-                        {
-                            System.Diagnostics.Debug.WriteLine("          Descriptor Id " + de.Uuid);
-                            System.Diagnostics.Debug.WriteLine("          Permissions " + de.Permissions);
-                        }
-                        //gatt.SetCharacteristicNotification(ch, true);
-                    }
-                }
+                //        foreach (var de in ch.Descriptors)
+                //        {
+                //            System.Diagnostics.Debug.WriteLine("          Descriptor Id " + de.Uuid);
+                //            System.Diagnostics.Debug.WriteLine("          Permissions " + de.Permissions);
+                //        }
+                //        //gatt.SetCharacteristicNotification(ch, true);
+                //    }
+                //}
             }
 
             public override void OnConnectionStateChange(BluetoothGatt gatt, [GeneratedEnum] GattStatus status, [GeneratedEnum] ProfileState newState)
             {
                 base.OnConnectionStateChange(gatt, status, newState);
 
-                if (newState == ProfileState.Connected)
-                   gatt.DiscoverServices();
+                //if (newState == ProfileState.Connected)
+                //   gatt.DiscoverServices();
             }
 
             

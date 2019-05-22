@@ -53,9 +53,9 @@
     <TransformFile Include="Transforms\EnumMethods.xml" />
   </ItemGroup>
   <ItemGroup>
-    <EmbeddedReferenceJar Include="Jars\database-connection-1.00.jar">
+    <InputJar Include="Jars\database-connection-1.00.jar">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </EmbeddedReferenceJar>
+    </InputJar>
   </ItemGroup>
   <ItemGroup>
     <EmbeddedReferenceJar Include="Jars\gson-2.8.2.jar">

@@ -8,4 +8,16 @@
   -->
 
   <attr path="/api/package[@name='com.idtechproducts.device']/interface[@name='OnReceiverListener']/method[@name='lcdDisplay' and count(parameter)=5 and parameter[1][@type='int'] and parameter[2][@type='java.lang.String[]'] and parameter[3][@type='int'] and parameter[4][@type='byte[]'] and parameter[5][@type='byte']]" name="managedName">TransactionFeedBack</attr>
+
+  <!--<remove-node path="/api/package[@name='com.dbconnection.dblibrarybeta']/class[@name='APIGetClass']"/>
+  <remove-node path="/api/package[@name='com.dbconnection.dblibrarybeta']/class[@name='APIPostClass']"/>-->
+  
+  <attr path="/api/package[@name='com.dbconnection.dblibrarybeta']/class[@name='APIGetClass']/method[@name='doInBackground' and count(parameter)=1 and parameter[1][@type='java.lang.String...']]" name="type">params string[] @params</attr>
+  <attr path="/api/package[@name='com.dbconnection.dblibrarybeta']/class[@name='APIGetClass']/method[@name='doInBackground' and count(parameter)=1 and parameter[1][@type='java.lang.String...']]" name="return">Java.Lang.String</attr>
+
+  <attr path="/api/package[@name='com.dbconnection.dblibrarybeta']/class[@name='APIPostClass']/method[@name='AsyncTask.DoInBackground' and count(parameter)=1]" name="managedReturn">Java.Lang.Object</attr>
+
+  <!--<attr path="/api/package[@name='com.dbconnection.dblibrarybeta']/class[@name='APIGetClass']/method[@name='doInBackground' and count(parameter)=1 and parameter[1][@type='java.lang.String...']]" name="manageReturn">params Java.Lang.Object</attr>-->
+  
+  
 </metadata>
