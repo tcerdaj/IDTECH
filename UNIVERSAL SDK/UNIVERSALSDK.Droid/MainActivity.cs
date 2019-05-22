@@ -25,11 +25,12 @@ using System.Text;
 using System.Threading;
 using System.Linq;
 using Com.Idtechproducts.Device.Audiojack.Tools;
+using Com.Dbconnection.Dblibrarybeta;
 
 namespace UNIVERSALSDK.Droid
 {
     [Activity(Label = "@string/app_name", Theme = "@style/AppTheme.NoActionBar", MainLauncher = true)]
-    public class MainActivity : AppCompatActivity, IOnReceiverListener
+    public class MainActivity : AppCompatActivity, IOnReceiverListener, IRESTResponse
     {
         private IDT_VP3300 device;
         private BluetoothAdapter mBtAdapter;
@@ -58,7 +59,8 @@ namespace UNIVERSALSDK.Droid
         static bool shouldTimeout;
         const string OUI = "00:1C:97"; // IDtech's MAC Address Organization\ally Unique Identifier
         FirmwareUpdateTool fmTool;
-        //ProfileManager profileManager;
+        ProfileManager profileManager;
+        const string FILE_NAME = "Unimag_Cfg.xml";
         protected override void OnCreate(Bundle savedInstanceState)
         {
             base.OnCreate(savedInstanceState);
@@ -103,6 +105,7 @@ namespace UNIVERSALSDK.Droid
 
             devices.Adapter = deviceAdapter;
             devices.Visibility = ViewStates.Invisible;
+            profileManager = new ProfileManager(this);
         }
 
         void InitializeReader()
@@ -762,6 +765,53 @@ namespace UNIVERSALSDK.Droid
             var errorCode = device.Device_startTransaction(1, 0, 0, 30, null);
             var message = device.Device_getResponseCodeString(errorCode);
             welcomeText.Text += "Transaction Results: " + message;
+        }
+
+        public void GetProfileResult(string output)
+        {
+            if (output.Equals("404"))
+            {
+                welcomeText.Text = "Profile not found. trying xml";
+                
+                String filepath = getXMLFileFromRaw();
+                if (!isFileExist(filepath))
+                {
+                    filepath = null;
+                }
+                device.Config_setXMLFileNameWithPath(filepath);
+                device.Config_loadingConfigurationXMLFile(false);
+
+            }
+            else
+            {
+                device.Device_connectWithProfile(ProfileUtility.JSONtoProfile(output));
+                welcomeText.Text = "Profile not found. trying xml";
+            }
+        }
+
+        public void PostProfileResult(string p0)
+        {
+            throw new NotImplementedException();
+        }
+
+
+        string getXMLFileFromRaw()
+        {
+            string szFilenameWithPath = Path.Combine(Android.OS.Environment.GetExternalStoragePublicDirectory(Android.OS.Environment.DirectoryDownloads).AbsolutePath, FILE_NAME);
+
+            if (!File.Exists(szFilenameWithPath))
+            {
+                using (var in_stream = Application.Context.Resources.OpenRawResource(Resource.Raw.umcfg))
+                {
+                    using (var out_stream = File.Create(szFilenameWithPath))
+                    {
+                        in_stream.CopyTo(out_stream);
+                        out_stream.Flush();
+                    }
+                }
+            }
+
+            return szFilenameWithPath;
         }
 
         public class BLEGattCallBack : BluetoothGattCallback
