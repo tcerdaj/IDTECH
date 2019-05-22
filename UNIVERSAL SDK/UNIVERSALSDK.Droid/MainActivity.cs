@@ -30,7 +30,7 @@ using Com.Dbconnection.Dblibrarybeta;
 namespace UNIVERSALSDK.Droid
 {
     [Activity(Label = "@string/app_name", Theme = "@style/AppTheme.NoActionBar", MainLauncher = true)]
-    public class MainActivity : AppCompatActivity, IOnReceiverListener, IRESTResponse
+    public class MainActivity : AppCompatActivity, IOnReceiverListener, IRESTResponse, IFirmwareUpdateToolMsg
     {
         private IDT_VP3300 device;
         private BluetoothAdapter mBtAdapter;
@@ -58,9 +58,13 @@ namespace UNIVERSALSDK.Droid
         static ArrayAdapter deviceAdapter;
         static bool shouldTimeout;
         const string OUI = "00:1C:97"; // IDtech's MAC Address Organization\ally Unique Identifier
-        FirmwareUpdateTool fmTool;
+        FirmwareUpdateTool fwTool;
         ProfileManager profileManager;
         const string FILE_NAME = "Unimag_Cfg.xml";
+        bool isFwInitDone;
+        bool startSwipe;
+        bool btleDeviceRegistered;
+
         protected override void OnCreate(Bundle savedInstanceState)
         {
             base.OnCreate(savedInstanceState);
@@ -71,7 +75,6 @@ namespace UNIVERSALSDK.Droid
             welcomeText.Text = "Swipe payment";
             countDown = (TextView)FindViewById(Resource.Id.countDown);
             countDown.Visibility = ViewStates.Invisible;
-
 
             Log.Info("Initialize", "Init...");
 
@@ -99,13 +102,23 @@ namespace UNIVERSALSDK.Droid
             fab.Click += FabOnClick;
 
             devices = FindViewById<ListView>(Resource.Id.deviceList);
-
             deviceList = new List<string>();
             deviceAdapter = new ArrayAdapter<string>(this, Resource.Layout.list_item, deviceList);
 
             devices.Adapter = deviceAdapter;
             devices.Visibility = ViewStates.Invisible;
             profileManager = new ProfileManager(this);
+
+            _manager = (BluetoothManager)Android.App.Application.Context.GetSystemService(Android.Content.Context.BluetoothService);
+
+            mBtAdapter = BluetoothAdapter.DefaultAdapter;
+
+            bleScanner = mBtAdapter.BluetoothLeScanner;
+
+            if (device != null)
+                device.UnregisterListen();
+
+            InitializeReader();
         }
 
         void InitializeReader()
@@ -116,10 +129,26 @@ namespace UNIVERSALSDK.Droid
             }
 
             device = new IDT_VP3300(this, Application.Context);
-
-
+            profileManager.DoGet();
+            device.Log_setVerboseLoggingEnable(true);
+            fwTool = new FirmwareUpdateTool(this, Application.Context);
         }
 
+
+        protected override void OnDestroy()
+        {
+            if (device != null)
+                device.UnregisterListen();
+
+            if (_device != null)
+            {
+                var mi = _device.Class.GetMethod("removeBond", null);
+                mi.Invoke(_device, null);
+            }
+
+
+            base.OnDestroy();
+        }
         private void _timer_Elapsed(object sender, System.Timers.ElapsedEventArgs e)
         {
             _countSeconds--;
@@ -164,6 +193,7 @@ namespace UNIVERSALSDK.Droid
                 transactionCompleted = false;
 
                 _countSeconds = Convert.ToInt32(BLE_ScanTimeout / 1000);
+                devicesScanned = 0;
                 isScanning = false;
                 shouldTimeout = true;
 
@@ -171,18 +201,9 @@ namespace UNIVERSALSDK.Droid
                 _timer.Elapsed -= _timer_Elapsed;
                 _timer.Elapsed += _timer_Elapsed;
                 _timer.Interval = 1000;
+                btleDeviceRegistered = false;
 
                 countDown.Text = string.Format("Remaining time {0}", _countSeconds);
-
-                _manager = (BluetoothManager)Android.App.Application.Context.GetSystemService(Android.Content.Context.BluetoothService);
-
-                mBtAdapter = BluetoothAdapter.DefaultAdapter;
-
-                bleScanner = mBtAdapter.BluetoothLeScanner;
-
-                //ReleaseDevice();
-
-                
 
                 if (device.Device_setDeviceType(DEVICE_TYPE.DeviceVp3300Bt))
                 {
@@ -194,7 +215,10 @@ namespace UNIVERSALSDK.Droid
                         StartActivityForResult(enableBtIntent, REQUEST_ENABLE_BT);
                     }
 
+                    deviceList.Clear();
+
                     deviceAdapter.Clear();
+                    
                     deviceAdapter.NotifyDataSetChanged();
 
                     mLeScanCallback = new BLEScanCallback() { RegisterBLE = RegisterBLE, _registered = false };
@@ -282,7 +306,7 @@ namespace UNIVERSALSDK.Droid
                     welcomeText.Text = "Connecting... \n Device: " + _device.Name;
                     RegisterBLE(null);
                 }
-                else if (_manager.Adapter.BondedDevices.Any(x => x.Address.StartsWith(OUI)))
+                else if (_manager.Adapter.BondedDevices.Any(x => x.Address.StartsWith(OUI) || !string.IsNullOrEmpty(Common.BLEDeviceName)))
                 {
                     _device = _manager.Adapter.BondedDevices.FirstOrDefault(x => x.Address.StartsWith(OUI));
                     var deviceState = _manager.GetConnectionState(_device, ProfileType.Gatt);
@@ -341,15 +365,17 @@ namespace UNIVERSALSDK.Droid
             Log.Info("RegisterBLE", "RegisterBLE");
             isScanning = false;
 
-            gatt = _device.ConnectGatt(Application.Context, false, bLEGattCallBack);
-
-            Com.Idtechproducts.Device.Common.BLEDeviceName = _device.Name;
-            BluetoothLEController.SetBluetoothDevice(_device);
+            //gatt = _device.ConnectGatt(Application.Context, false, bLEGattCallBack);
 
             device = device?? new IDT_VP3300(this, Application.Context);
-            device.RegisterListen();
-            gatt.Connect();
 
+            if (!btleDeviceRegistered)
+            {
+                device.RegisterListen();
+                btleDeviceRegistered = true;
+            }
+
+            //gatt.Connect();
         }
 
         private void SetFilters(IList<ParcelUuid> uuids)
@@ -397,24 +423,40 @@ namespace UNIVERSALSDK.Droid
             return result;
         }
 
-        public void ICCNotifyInfo(byte[] p0, string p1)
+        public void ICCNotifyInfo(byte[] dataNotify, string strMessage)
         {
-            throw new NotImplementedException();
+            if (strMessage != null && strMessage.Length > 0)
+            {
+                string strHexResp = Common.GetHexStringFromBytes(dataNotify);
+                Log.Info("Demo Info >>>>>", "dataNotify=" + strHexResp);
+               welcomeText.Text = "ICC Notification Info: " + strMessage + "\n" + "Resp: " + strHexResp;
+            }
         }
 
-        public void LoadXMLConfigFailureInfo(int p0, string p1)
+        public void LoadXMLConfigFailureInfo(int index, string strMessage)
         {
-            throw new NotImplementedException();
+            hanlder.Post(() =>
+            {
+                welcomeText.Text = "XML loading error...";
+            });
         }
 
-        public void AutoConfigCompleted(StructConfigParameters p0)
+        public void AutoConfigCompleted(StructConfigParameters profile)
         {
-            throw new NotImplementedException();
+            profileManager.DoPost(profile);
+            string info = "";
+
+            if (device.Device_connectWithProfile(profile))
+                info = "Auto Configuration was success";
+            else
+                info = "Auto Configuration didnt work";
+
+            welcomeText.Text = info;
         }
 
-        public void AutoConfigProgress(int p0)
+        public void AutoConfigProgress(int progressValue)
         {
-            throw new NotImplementedException();
+            welcomeText.Text = "AutoConfig is running..." + progressValue + "%";
         }
 
         public void DataInOutMonitor(byte[] p0, bool p1)
@@ -428,56 +470,117 @@ namespace UNIVERSALSDK.Droid
             hanlder.Post(async () =>
             {
                 var sb = new Java.Lang.StringBuilder();
+                string info = "";
                 var version = device.Device_getFirmwareVersion(sb);
-                welcomeText.Text = string.Format("Device Connected \n firmeware:{0} \n version: {1} ", sb.ToString(), version);
+                welcomeText.Text = string.Format("Reader Connected \n firmeware:{0}", sb.ToString());
 
-                Log.Info("DeviceConnected", "Connected");
+
+                Log.Info("Reader", "Connected");
                 Log.Info("Device", welcomeText.Text);
-                var data = new ResDataStruct();
-                var result = device.Device_sendDataCommand("F002", false, null, data);
-                if (data.ResData != null && data.ResData.Count > 0)
+
+                if (!Common.BootLoaderMode)
                 {
-                    var batteryLevel = data.ResData[0];
-                    string level = "Medium";
-                    if (batteryLevel >= 210)
-                        level = "Full";
-                    else if (batteryLevel <= 192)
-                        level = "Low";
+                    var data = new ResDataStruct();
+                    var result = device.Device_sendDataCommand("F002", false, null, data);
+                    if (data.ResData != null && data.ResData.Count > 0)
+                    {
+                        var batteryLevel = data.ResData[0];
+                        string level = "Medium";
+                        if (batteryLevel >= 210)
+                            level = "Full";
+                        else if (batteryLevel <= 192)
+                            level = "Low";
 
-                    //welcomeText.Text = "Battery level " + level;
+                        string device_name = device.Device_getDeviceType().ToString();
+                        info = device_name.Replace("DEVICE_", "");
 
-                    int image = level == "Full" ? Resource.Mipmap.full : level == "Low" ? Resource.Mipmap.low : Resource.Mipmap.medium;
-                    batteryLifeView.SetImageResource(image);
-                    await System.Threading.Tasks.Task.Delay(5000);
+                        if (info.StartsWith("VP3300_BT Reader"))
+                            info += "Address: " + _device.Address;
+
+                        int image = level == "Full" ? Resource.Mipmap.full : level == "Low" ? Resource.Mipmap.low : Resource.Mipmap.medium;
+                        batteryLifeView.SetImageResource(image);
+                        await System.Threading.Tasks.Task.Delay(5000);
+                    }
+
+                    batteryLifeView.Visibility = ViewStates.Visible;
+                    countDown.Visibility = ViewStates.Invisible;
+
+                    welcomeText.Text = info;
+
+                    StartTransaction();
                 }
-
-                batteryLifeView.Visibility = ViewStates.Visible;
-                countDown.Visibility = ViewStates.Invisible;
-                StartTransaction();
             });
         }
 
-        private void StartTransaction()
+        private void StartTransaction(bool useEMV = false)
         {
-            var errorCode = device.Device_startTransaction(1, 0, 0, 30, null);
-            var message = device.Device_getResponseCodeString(errorCode);
-            welcomeText.Text += "Transaction Results: " + message;
+            string info = string.Empty;
+            startSwipe = true;
+
+            if (useEMV)
+            {
+                ResDataStruct resData = new ResDataStruct();
+                info = "Processing EMV Transaction.  Please wait...\n";
+                detail = "";
+                int ret = startEMVTransaction(resData);
+
+                if (ret == ErrorCode.ReturnCodeOkNextCommand)
+                {
+                    info =  "Processing EMV Transaction...";
+                }
+                else
+                {
+                    info = "EMV Transaction Failed\n";
+                    info += "Status: " + device.Device_getResponseCodeString(ret) + "";
+                }
+            }
+            else
+            {
+                var ret = device.Device_startTransaction(1, 0, 0, 30, null, true);
+
+                if (ret == ErrorCode.Success)
+                {
+                    info = "Please swipe/tap/insert a card";
+                    detail = "";
+                }
+                else if (ret == ErrorCode.ReturnCodeOkNextCommand)
+                {
+                    info = "Start EMV transaction\n";
+                    detail = "";
+                }
+                else
+                {
+                    info = "Cannot swipe/tap/insert card\n";
+                    info += "Status: " + device.Device_getResponseCodeString(ret) + "";
+                    detail = "";
+                }
+            }
+
+            welcomeText.Text += "Transaction Results: " + info;
         }
 
+        ////////////// CALLBACKS /////////////
         public void DeviceDisconnected()
         {
             hanlder.Post(() =>
             {
-                Log.Info("DeviceDisconnected", "Disconnected");
+                Log.Info("Reader", "Disconnected");
 
-                gatt?.Disconnect();
+                //if (!isScanning && _device != null && _manager.GetConnectionState(_device, ProfileType.Gatt) != ProfileState.Connected)
+                //{
 
-                if (!isScanning && _device != null && _manager.GetConnectionState(_device, ProfileType.Gatt) != ProfileState.Connected)
+                //    batteryLifeView.Visibility = ViewStates.Invisible;
+                //    releaseSDK();
+                //}
+
+                var info = "";
+                if (!Common.BootLoaderMode)
                 {
-                    welcomeText.Text = "Device Disconnected";
+                    info = "Reader is disconnected";
                     batteryLifeView.Visibility = ViewStates.Invisible;
-                    releaseSDK();
                 }
+
+                welcomeText.Text = info;
             });
         }
         string detail = "";
@@ -717,7 +820,7 @@ namespace UNIVERSALSDK.Droid
 
         public void MsgToConnectDevice()
         {
-            throw new NotImplementedException();
+            welcomeText.Text =  "Connecting a reader...";
         }
 
         public void SwipeMSRData(IDTMSRData msrData)
@@ -774,13 +877,12 @@ namespace UNIVERSALSDK.Droid
                 welcomeText.Text = "Profile not found. trying xml";
                 
                 String filepath = getXMLFileFromRaw();
-                if (!isFileExist(filepath))
+                if (!File.Exists(filepath))
                 {
                     filepath = null;
                 }
                 device.Config_setXMLFileNameWithPath(filepath);
                 device.Config_loadingConfigurationXMLFile(false);
-
             }
             else
             {
@@ -789,11 +891,10 @@ namespace UNIVERSALSDK.Droid
             }
         }
 
-        public void PostProfileResult(string p0)
+        public void PostProfileResult(string s)
         {
-            throw new NotImplementedException();
+            welcomeText.Text = "Post: " + s;
         }
-
 
         string getXMLFileFromRaw()
         {
@@ -814,6 +915,237 @@ namespace UNIVERSALSDK.Droid
             return szFilenameWithPath;
         }
 
+        public void OnReceiveMsgChallengeResult(int returnCode, byte[] data)
+        {
+            // Not called for UniPay Firmware update
+        }
+
+        public void OnReceiveMsgUpdateFirmwareProgress(int nProgressValue)
+        {
+            string info;
+
+            if (Common.BootLoaderMode)
+                info = "Firmware update is in process... (" + nProgressValue + "%)";
+            else
+                info = "Firmware update initialization is in process...";
+            welcomeText.Text += "\n" + info;
+        }
+
+        public int startEMVTransaction(ResDataStruct resData)
+        {
+            byte[] tags = { (byte)0xDF, (byte)0xEF, 0x1F, 0x02, 0x01, 0x00 };
+            IDT_VP3300.Emv_allowFallback(true);
+            if (IDT_VP3300.Emv_getAutoAuthenticateTransaction())
+                return device.Emv_startTransaction(1, 0.00, 0, 30, tags, false);
+            else
+                return device.Emv_startTransaction(1, 0.00, 0, 30, null, false);
+        }
+        public void OnReceiveMsgUpdateFirmwareResult(int result)
+        {
+            string info = string.Empty;
+            switch (result)
+            {
+                case FirmwareUpdateToolMsg.CmdUpdateFirmwareSucceed:
+                    info = "Firmware update is done successfully...";
+                    isFwInitDone = false;
+                    break;
+                case FirmwareUpdateToolMsg.CmdInitializeUpdateFirmwareSucceed:
+                    if (device.Device_getDeviceType() == DEVICE_TYPE.DeviceKioskIii)
+                        info = "Firmware update initialization is done successfully, please wait for device reconnection and do firmware update.";
+                    else
+                        info = "Firmware update initialization is done successfully, please do firmware update now.";
+                    isFwInitDone = true;
+                    break;
+                case FirmwareUpdateToolMsg.CmdUpdateFirmwareTimeout:
+                    if (Common.BootLoaderMode)
+                    {
+                        info = "Firmware update timeout... Please try firmware update again...";
+                        detail = "";
+                    }
+                    else
+                    {
+                        info = "Firmware update initialization timeout... Please try again...";
+                    }
+                    break;
+                case FirmwareUpdateToolMsg.CmdUpdateFirmwareDownloadBlockFailed:
+                    info = "Firmware update failed... Please try again...";
+                    detail = "";
+                    break;
+            }
+
+            if (string.IsNullOrEmpty(info))
+                welcomeText.Text = info;
+        }
+
+        private void printTags(IDTEMVData emvData)
+        {
+            if (emvData.Result == IDTEMVData.StartTransSuccess)
+                detail = "Start transaction response:\r\n";
+            else if (emvData.Result == IDTEMVData.GoOnline)
+                detail += "\r\nAuthentication response:\r\n";
+            else if (emvData.Result == IDTEMVData.UseMagstripe || emvData.Result == IDTEMVData.MsrSuccess)
+            {
+                swipeMSRData(emvData.MsrCardData);
+                detail += "\r\n\r\n";
+                detail += this.emvErrorCodes(emvData.Result) + "\r\n";
+                return;
+            }
+            else
+                detail += "\r\nComplete Transaction response:\r\n";
+            if (emvData.UnencryptedTags != null && emvData.UnencryptedTags.Count != 0)
+            {
+                detail += "Unencrypted Tags:\r\n";
+                var keys = emvData.UnencryptedTags.Keys;
+                foreach (DictionaryEntry key in keys)
+                {
+                    detail += key + ": ";
+                    var d = emvData.UnencryptedTags[key.Key];
+                    byte[] data = Encoding.ASCII.GetBytes(key.Key.ToString());
+                    detail += Common.GetHexStringFromBytes(data) + "\r\n";
+                }
+            }
+            if (emvData.MaskedTags != null && emvData.MaskedTags.Count != 0)
+            {
+                detail += "Masked Tags:\r\n";
+                var keys = emvData.MaskedTags.Keys;
+                foreach (DictionaryEntry key in keys)
+                {
+                    detail += key + ": ";
+                    var d = emvData.MaskedTags[key.Key];
+                    byte[] data = Encoding.ASCII.GetBytes(key.Key.ToString());
+                    detail += Common.GetHexStringFromBytes(data) + "\r\n";
+                }
+            }
+            if (emvData.EncryptedTags != null && emvData.EncryptedTags.Count != 0)
+            {
+                detail += "Encrypted Tags:\r\n";
+                var keys = emvData.EncryptedTags.Keys;
+                foreach (DictionaryEntry key in keys)
+                {
+                    detail += key + ": ";
+                    var d = emvData.EncryptedTags[key.Key];
+                    byte[] data = Encoding.ASCII.GetBytes(key.Key.ToString());
+                    detail += Common.GetHexStringFromBytes(data) + "\r\n";
+                }
+            }
+            if (emvData.MsrCardData != null && emvData.MsrCardData.FastEMV != null && emvData.MsrCardData.FastEMV.Length > 0)
+                detail += "\r\nFastEMV: " + emvData.MsrCardData.FastEMV + "\r\n\r\n";
+            detail += this.emvErrorCodes(emvData.Result) + "\r\n";
+
+            welcomeText.Text = detail;
+        }
+        IDTMSRData msr_card;
+        public void swipeMSRData(IDTMSRData card)
+        {
+            msr_card = card;
+            string info = "";
+            hanlder.Post(() => {
+                startSwipe = false;
+                if (msr_card.Result != ErrorCode.Success)
+                {
+                    info = "MSR card data didn't read correctly\n";
+                    info += ErrorCodeInfo.GetErrorCodeDescription(msr_card.Result);
+                    if (msr_card.Result != ErrorCode.FailedNack)
+                    {
+                        detail = "";
+                        welcomeText.Text = info;
+                        return;
+                    }
+                }
+                else
+                {
+                    info = "MSR Card tapped/Swiped Successfully";
+                }
+
+                detail = Common.Parse_MSRData(device.Device_getDeviceType(), msr_card);
+
+                welcomeText.Text = info + "\n details" + detail;
+
+            });
+        }
+        private string emvErrorCodes(int val)
+        {
+            if (val == IDTEMVData.ApprovedOffline) return "APPROVED OFFLINE";
+            if (val == IDTEMVData.DeclinedOffline) return "DECLINED OFFLINE";
+            if (val == IDTEMVData.Approved) return "APPROVED";
+            if (val == IDTEMVData.Declined) return "DECLINED";
+            if (val == IDTEMVData.GoOnline) return "GO ONLINE";
+            if (val == IDTEMVData.CallYourBank) return "CALL YOUR BANK";
+            if (val == IDTEMVData.NotAccepted) return "NOT ACCEPTED";
+            if (val == IDTEMVData.UseMagstripe) return "USE MAGSTRIPE";
+            if (val == IDTEMVData.TimeOut) return "TIME OUT";
+            if (val == IDTEMVData.StartTransSuccess) return "START TRANS SUCCESS";
+            if (val == IDTEMVData.MsrSuccess) return "MSR SUCCESS";
+            if (val == IDTEMVData.TransactionCanceled) return "TRANSACTION CANCELED";
+            if (val == IDTEMVData.CtlsTwoCards) return "CTLS TWO CARDS";
+            if (val == IDTEMVData.CtlsTerminate) return "CTLS TERMINATE";
+            if (val == IDTEMVData.CtlsTerminateTryAnother) return "CTLS TERMINATE TRY ANOTHER";
+            if (val == IDTEMVData.MsrSwipeCaptured) return "MSR SWIPE CAPTURED";
+            if (val == IDTEMVData.RequestOnlinePin) return "REQUEST ONLINE PIN";
+            if (val == IDTEMVData.RequestSignature) return "REQUEST SIGNATURE";
+            if (val == IDTEMVData.FallbackToContact) return "FALLBACK TO CONTACT";
+            if (val == IDTEMVData.FallbackToOther) return "FALLBACK TO OTHER";
+            if (val == IDTEMVData.ReversalRequired) return "REVERSAL REQUIRED";
+            if (val == IDTEMVData.AdviseRequired) return "ADVISE REQUIRED";
+            if (val == IDTEMVData.NoAdviseReversalRequired) return "NO ADVISE REVERSAL REQUIRED";
+            if (val == IDTEMVData.UnableToReachHost) return "UNABLE TO REACH HOST";
+            if (val == IDTEMVData.FileArgInvalid) return "FILE ARG INVALID";
+            if (val == IDTEMVData.FileOpenFailed) return "FILE OPEN FAILED";
+            if (val == IDTEMVData.FileOperationFailed) return "FILE OPERATION FAILED";
+            if (val == IDTEMVData.MemoryNotEnough) return "MEMORY NOT ENOUGH";
+            if (val == IDTEMVData.SmartcardOk) return "SMARTCARD OK";
+            if (val == IDTEMVData.SmartcardFail) return "SMARTCARD FAIL";
+            if (val == IDTEMVData.SmartcardInitFailed) return "SMARTCARD INIT FAILED";
+            if (val == IDTEMVData.FallbackSituation) return "FALLBACK SITUATION";
+            if (val == IDTEMVData.SmartcardAbsent) return "SMARTCARD ABSENT";
+            if (val == IDTEMVData.SmartcardTimeout) return "SMARTCARD TIMEOUT";
+            if (val == IDTEMVData.MsrCardError) return "MSR CARD ERROR";
+            if (val == IDTEMVData.ParsingTagsFailed) return "PARSING TAGS FAILED";
+            if (val == IDTEMVData.CardDataElementDuplicate) return "CARD DATA ELEMENT DUPLICATE";
+            if (val == IDTEMVData.DataFormatIncorrect) return "DATA FORMAT INCORRECT";
+            if (val == IDTEMVData.AppNoTerm) return "APP NO TERM";
+            if (val == IDTEMVData.AppNoMatching) return "APP NO MATCHING";
+            if (val == IDTEMVData.AmandatoryObjectMissing) return "AMANDATORY OBJECT MISSING";
+            if (val == IDTEMVData.AppSelectionRetry) return "APP SELECTION RETRY";
+            if (val == IDTEMVData.AmountErrorGet) return "AMOUNT ERROR GET";
+            if (val == IDTEMVData.CardRejected) return "CARD REJECTED";
+            if (val == IDTEMVData.AipNotReceived) return "AIP NOT RECEIVED";
+            if (val == IDTEMVData.AflNotReceivede) return "AFL NOT RECEIVEDE";
+            if (val == IDTEMVData.AflLenOutOfRange) return "AFL LEN OUT OF RANGE";
+            if (val == IDTEMVData.SfiOutOfRange) return "SFI OUT OF RANGE";
+            if (val == IDTEMVData.AflIncorrect) return "AFL INCORRECT";
+            if (val == IDTEMVData.ExpDateIncorrect) return "EXP DATE INCORRECT";
+            if (val == IDTEMVData.EffDateIncorrect) return "EFF DATE INCORRECT";
+            if (val == IDTEMVData.IssCodTblOutOfRange) return "ISS COD TBL OUT OF RANGE";
+            if (val == IDTEMVData.CryptogramTypeIncorrect) return "CRYPTOGRAM TYPE INCORRECT";
+            if (val == IDTEMVData.PseByCardNotSupported) return "PSE BY CARD NOT SUPPORTED";
+            if (val == IDTEMVData.UserLanguageSelected) return "USER LANGUAGE SELECTED";
+            if (val == IDTEMVData.ServiceNotAllowed) return "SERVICE NOT ALLOWED";
+            if (val == IDTEMVData.NoTagFound) return "NO TAG FOUND";
+            if (val == IDTEMVData.CardBlocked) return "CARD BLOCKED";
+            if (val == IDTEMVData.LenIncorrect) return "LEN INCORRECT";
+            if (val == IDTEMVData.CardComError) return "CARD COM ERROR";
+            if (val == IDTEMVData.TscNotIncreased) return "TSC NOT INCREASED";
+            if (val == IDTEMVData.HashIncorrect) return "HASH INCORRECT";
+            if (val == IDTEMVData.ArcNotPresenced) return "ARC NOT PRESENCED";
+            if (val == IDTEMVData.ArcInvalid) return "ARC INVALID";
+            if (val == IDTEMVData.CommNoOnline) return "COMM NO ONLINE";
+            if (val == IDTEMVData.TranTypeIncorrect) return "TRAN TYPE INCORRECT";
+            if (val == IDTEMVData.AppNoSupport) return "APP NO SUPPORT";
+            if (val == IDTEMVData.AppNotSelect) return "APP NOT SELECT";
+            if (val == IDTEMVData.LangNotSelect) return "LANG NOT SELECT";
+            if (val == IDTEMVData.TermDataNotPresenced) return "TERM DATA NOT PRESENCED";
+            if (val == IDTEMVData.CvmTypeUnknown) return "CVM TYPE UNKNOWN";
+            if (val == IDTEMVData.CvmAipNotSupported) return "CVM AIP NOT SUPPORTED";
+            if (val == IDTEMVData.CvmTag8eMissing) return "CVM TAG 8E MISSING";
+            if (val == IDTEMVData.CvmTag8eFormatError) return "CVM TAG 8E FORMAT ERROR";
+            if (val == IDTEMVData.CvmCodeIsNotSupported) return "CVM CODE IS NOT SUPPORTED";
+            if (val == IDTEMVData.CvmCondCodeIsNotSupported) return "CVM COND CODE IS NOT SUPPORTED";
+            if (val == IDTEMVData.CvmNoMore) return "CVM NO MORE";
+            if (val == IDTEMVData.PinBypassedBefore) return "PIN BYPASSED BEFORE";
+            if (val == IDTEMVData.Unkonwn) return "UNKONWN";
+            return "";
+        }
         public class BLEGattCallBack : BluetoothGattCallback
         {
             public override void OnServicesDiscovered(BluetoothGatt gatt, [GeneratedEnum] GattStatus status)
@@ -929,6 +1261,10 @@ namespace UNIVERSALSDK.Droid
                         welcomeText.Text = "Device Found - " + r.Device.Name;
 
                         r.Device.CreateBond();
+
+                        Common.BLEDeviceName = r.Device.Address;
+                        BluetoothLEController.SetBluetoothDevice(r.Device);
+                        _device = r.Device;
 
                         var uuids = r.ScanRecord.ServiceUuids;
 
