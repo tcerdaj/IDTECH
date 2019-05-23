@@ -162,7 +162,6 @@
       <SubType>Designer</SubType>
     </AndroidResource>
   </ItemGroup>
-  <ItemGroup />
   <ItemGroup>
     <AndroidResource Include="Resources\Raw\umcfg.xml" />
   </ItemGroup>

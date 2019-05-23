@@ -20,20 +20,19 @@
 		layout="@layout/content_main" />
 	<android.support.design.widget.FloatingActionButton
 		android:id="@+id/fab"
-		android:layout_width="80dp"
-		android:layout_height="80dp"
+		android:layout_width="60dp"
+		android:layout_height="60dp"
 		android:layout_gravity="bottom|end"
 		android:layout_margin="@dimen/fab_margin"
 		app:srcCompat="@mipmap/swipe_card_gray" />
 	<ImageView
 		android:src="@mipmap/full"
-		android:layout_width="80dp"
-		android:layout_height="80dp"
+		android:layout_width="60dp"
+		android:layout_height="60dp"
 		android:visibility="invisible"
+		android:background="@color/material_blue_grey_800"
 		android:padding="10dp"
 		android:id="@+id/batteryLife"
 		android:layout_gravity="bottom|start"
 	    android:scaleType="fitXY"/>
-	
-
 </android.support.design.widget.CoordinatorLayout>

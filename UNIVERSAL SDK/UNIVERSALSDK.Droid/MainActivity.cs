@@ -66,6 +66,9 @@ namespace UNIVERSALSDK.Droid
         bool startSwipe;
         bool btleDeviceRegistered;
         List<BluetoothDevice> arrayOfDevices = new List<BluetoothDevice>();
+        static DisplayMetrics dm;
+        FloatingActionButton fab;
+
         protected override void OnCreate(Bundle savedInstanceState)
         {
             base.OnCreate(savedInstanceState);
@@ -76,6 +79,8 @@ namespace UNIVERSALSDK.Droid
             welcomeText.Text = "Swipe payment";
             countDown = (TextView)FindViewById(Resource.Id.countDown);
             countDown.Visibility = ViewStates.Invisible;
+
+            dm = Resources.DisplayMetrics;
 
             Log.Info("Initialize", "Init...");
 
@@ -98,7 +103,7 @@ namespace UNIVERSALSDK.Droid
             Android.Support.V7.Widget.Toolbar toolbar = FindViewById<Android.Support.V7.Widget.Toolbar>(Resource.Id.toolbar);
             SetSupportActionBar(toolbar);
 
-            FloatingActionButton fab = FindViewById<FloatingActionButton>(Resource.Id.fab);
+            fab = FindViewById<FloatingActionButton>(Resource.Id.fab);
 
             fab.Click += FabOnClick;
 
@@ -106,9 +111,14 @@ namespace UNIVERSALSDK.Droid
             deviceList = new List<string>();
             deviceAdapter = new DeviceApapter(this, Resource.Layout.list_item, arrayOfDevices);
 
+            ViewGroup headerView = (ViewGroup)LayoutInflater.Inflate(Resource.Layout.list_item, devices, false);
+            headerView.SetBackgroundColor(Android.Graphics.Color.LightGray);
+
+            devices.AddHeaderView(headerView);
+
             var dso = new DataSetObserverDelegate();
 
-            //deviceAdapter.RegisterDataSetObserver(dso);
+            deviceAdapter.RegisterDataSetObserver(dso);
 
             devices.Adapter = deviceAdapter;
             devices.Visibility = ViewStates.Invisible;
@@ -195,6 +205,8 @@ namespace UNIVERSALSDK.Droid
 
                 _lookSwipe = true;
 
+                fab.Visibility = ViewStates.Invisible;
+
                 view = (View)sender;
                 Snackbar.Make(view, "Scanning...", Snackbar.LengthLong)
                     .SetAction("Action", (Android.Views.View.IOnClickListener)null).Show();
@@ -231,8 +243,6 @@ namespace UNIVERSALSDK.Droid
                     
                     deviceAdapter.NotifyDataSetChanged();
 
-                    devices.Visibility = ViewStates.Visible;
-
                     mLeScanCallback = new BLEScanCallback() { RegisterBLE = RegisterBLE, _registered = false };
 
                     scanLeDevice(true, BLE_ScanTimeout);
@@ -242,6 +252,7 @@ namespace UNIVERSALSDK.Droid
             catch (Exception ex)
             {
                 welcomeText.Text = ex.Message;
+                fab.Visibility = ViewStates.Visible;
             }
             finally
             {
@@ -295,7 +306,7 @@ namespace UNIVERSALSDK.Droid
                 
                 Log.Info("scanLeDevice", "Scanning...");
                 batteryLifeView.Visibility = ViewStates.Invisible;
-
+                
                 handler.PostDelayed(() =>
                 {
                     if (btleDeviceRegistered && !device.Device_isConnected())
@@ -308,7 +319,7 @@ namespace UNIVERSALSDK.Droid
 
                         RegisterBLE(null);
                     }
-                    if (device != null && !device.Device_isConnected() && !transactionCompleted && shouldTimeout)
+                    else if (device != null && !device.Device_isConnected() && !transactionCompleted && shouldTimeout)
                     {
                         welcomeText.Text = "Timeout - Devices Scanned: " + devicesScanned; ;
                         Snackbar.Make(view, "Timeout " + devicesScanned + "- Devices", Snackbar.LengthLong)
@@ -319,6 +330,8 @@ namespace UNIVERSALSDK.Droid
                             isScanning = false;
                             //gatt?.Disconnect();
                         }
+
+                        fab.Visibility = ViewStates.Visible;
                     }
                 }, timeout);
 
@@ -608,6 +621,7 @@ namespace UNIVERSALSDK.Droid
                 }
 
                 welcomeText.Text = info;
+                fab.Visibility = ViewStates.Visible;
             });
         }
         string detail = "";
@@ -697,6 +711,7 @@ namespace UNIVERSALSDK.Droid
                         await System.Threading.Tasks.Task.Delay(2000);
                         Log.Info("EmvTransactionData", "Transaction completed");
                         transactionCompleted = true;
+                        fab.Visibility = ViewStates.Visible;
                     }
                     else
                     {
@@ -1243,12 +1258,24 @@ namespace UNIVERSALSDK.Droid
             return "";
         }
 
+        //DisplayMetrics dm = Resources.DisplayMetrics;
+
+
         public class DataSetObserverDelegate : DataSetObserver
         {
             public override void OnChanged()
             {
-                base.OnChanged();
-                devices.SetSelection(deviceAdapter.Count - 1);
+                hanlder.Post(() =>
+                {
+                    base.OnChanged();
+
+                    int h1 = devices.Height;
+                    int h2 = (int)(dm.HeightPixels / dm.Density);
+
+                    var position = deviceAdapter.Count - 1;
+                    devices.SmoothScrollToPositionFromTop(position, h1/2 - h2/2, 500);
+                    //devices.SetSelection(deviceAdapter.Count - 1);
+                });
             }
         }
         public class DeviceApapter : ArrayAdapter<BluetoothDevice>
@@ -1272,8 +1299,11 @@ namespace UNIVERSALSDK.Droid
                 TextView colName = (TextView)convertView.FindViewById(Resource.Id.col_name);
                 TextView colAddress = (TextView)convertView.FindViewById(Resource.Id.col_address);
 
-                colName.Text = device.Name;
+                colName.Text = string.IsNullOrEmpty(device.Name)? "Unknow": device.Name ;
                 colAddress.Text = device.Address;
+
+                if (colAddress.Text.StartsWith(OUI))
+                    convertView.SetBackgroundColor(Android.Graphics.Color.Orange);
 
                 return convertView;
             }
@@ -1332,72 +1362,76 @@ namespace UNIVERSALSDK.Droid
 
             public override void OnScanResult([GeneratedEnum] ScanCallbackType callbackType, ScanResult r)
             {
-                Log.Info("OnScanResult", "Device..." + (string.IsNullOrEmpty(r.Device.Address) ? r.Device.Name : r.Device.Address));
-                Log.Info("OnScanResult", "Device Name..." + (string.IsNullOrEmpty(r.Device.Address) ? r.Device.Name : r.Device.Name));
-                System.Diagnostics.Debug.WriteLine("    Name " + r.Device.Name);
-                System.Diagnostics.Debug.WriteLine("    Address " + r.Device.Address);
-
-                string device_ = string.IsNullOrEmpty(r.Device.Name) ? r.Device.Address : r.Device.Name;
-
-                if (!deviceList.Contains(device_))
+                hanlder.Post(() =>
                 {
-                    deviceList.Add(device_);
-                    deviceAdapter.Add(r.Device);
-                    deviceAdapter.NotifyDataSetChanged();
-                }
+                    Log.Info("OnScanResult", "Device..." + (string.IsNullOrEmpty(r.Device.Address) ? r.Device.Name : r.Device.Address));
+                    Log.Info("OnScanResult", "Device Name..." + (string.IsNullOrEmpty(r.Device.Address) ? r.Device.Name : r.Device.Name));
+                    System.Diagnostics.Debug.WriteLine("    Name " + r.Device.Name);
+                    System.Diagnostics.Debug.WriteLine("    Address " + r.Device.Address);
 
-                if (_registered || !isScanning)
-                {
-                    bleScanner.StopScan(mLeScanCallback);
+                    string device_ = string.IsNullOrEmpty(r.Device.Name) ? r.Device.Address : r.Device.Name;
 
-                    if (_registered)
-                        welcomeText.Text = "Device Registered..." + r.Device.Name;
-                }
-                else
-                {
-                    devicesScanned++;
-
-                    welcomeText.Text = string.Format("Scanning...{0} \n device address {1}", devicesScanned, r.Device.Address);
-
-                    System.Diagnostics.Debug.WriteLine("    devicesScanned: " + devicesScanned);
-                }
-
-                if (r.Device.Address.StartsWith(OUI))
-                {
-                    //AddDeviceToFilter(r);
-                    bleScanner.StopScan(mLeScanCallback);
-                    isScanning = false;
-
-                    shouldTimeout = false;
-
-                    if (!_registered)
+                    if (!deviceList.Contains(device_) && !_registered)
                     {
-                        _registered = true;
-                        System.Diagnostics.Debug.WriteLine("**************FOUND*************");
-                        System.Diagnostics.Debug.WriteLine("    Name " + r.Device.Name);
-                        System.Diagnostics.Debug.WriteLine("    Address " + r.Device.Address);
-                        System.Diagnostics.Debug.WriteLine("    tXPower " + r.ScanRecord.TxPowerLevel);
-                        System.Diagnostics.Debug.WriteLine("    Rssi " + r.Rssi);
-
-                        if (!deviceList.Contains(device_))
-                        {
-                            deviceList.Add(device_);
-                            deviceAdapter.Add(r.Device);
-                        }
-
-                        welcomeText.Text = "Device Found - " + r.Device.Name;
-
-                        r.Device.CreateBond();
-
-                        _device = r.Device;
-
-                        var uuids = r.ScanRecord.ServiceUuids;
-
-                        RegisterBLE?.Invoke(uuids);
-
+                        devices.Visibility = ViewStates.Visible;
+                        deviceList.Add(device_);
+                        deviceAdapter.Add(r.Device);
                         deviceAdapter.NotifyDataSetChanged();
                     }
-                }
+
+                    if (_registered || !isScanning)
+                    {
+                        bleScanner.StopScan(mLeScanCallback);
+
+                        if (_registered)
+                            welcomeText.Text = "Device Registered..." + r.Device.Name;
+                    }
+                    else
+                    {
+                        devicesScanned++;
+
+                        welcomeText.Text = string.Format("Scanning...{0} \n device address {1}", devicesScanned, r.Device.Address);
+
+                        System.Diagnostics.Debug.WriteLine("    devicesScanned: " + devicesScanned);
+                    }
+
+                    if (r.Device.Address.StartsWith(OUI))
+                    {
+                        //AddDeviceToFilter(r);
+                        bleScanner.StopScan(mLeScanCallback);
+                        isScanning = false;
+
+                        shouldTimeout = false;
+
+                        if (!_registered)
+                        {
+                            _registered = true;
+                            System.Diagnostics.Debug.WriteLine("**************FOUND*************");
+                            System.Diagnostics.Debug.WriteLine("    Name " + r.Device.Name);
+                            System.Diagnostics.Debug.WriteLine("    Address " + r.Device.Address);
+                            System.Diagnostics.Debug.WriteLine("    tXPower " + r.ScanRecord.TxPowerLevel);
+                            System.Diagnostics.Debug.WriteLine("    Rssi " + r.Rssi);
+
+                            if (!deviceList.Contains(device_))
+                            {
+                                deviceList.Add(device_);
+                                deviceAdapter.Add(r.Device);
+                            }
+
+                            welcomeText.Text = "Device Found - " + r.Device.Name;
+
+                            r.Device.CreateBond();
+
+                            _device = r.Device;
+
+                            var uuids = r.ScanRecord.ServiceUuids;
+
+                            RegisterBLE?.Invoke(uuids);
+
+                            deviceAdapter.NotifyDataSetChanged();
+                        }
+                    }
+                });
             }
 
             private static void AddDeviceToFilter(ScanResult r)

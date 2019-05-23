@@ -7,30 +7,30 @@
     app:layout_behavior="@string/appbar_scrolling_view_behavior"
     tools:showIn="@layout/activity_main">
 	<LinearLayout
-		android:layout_width="fill_parent"
-        android:layout_height="fill_parent"
-		android:layout_centerInParent="true"
-        android:orientation="vertical" 
-		android:gravity="center" >
-	<TextView
-		android:id="@+id/countDown"
-		android:layout_width="fill_parent"
-		android:layout_height="wrap_content"
-		android:text="0"
-		android:gravity="center"/>
-    <TextView
-		android:id="@+id/welcomeText"
-        android:layout_width="fill_parent"
-        android:layout_height="wrap_content"
-        android:text="Swipe" 
-		android:gravity="center"/>
-		
-     <ListView
-			android:id="@+id/deviceList"
-			android:layout_width="wrap_content"
-            android:layout_height="900dp"
-			android:visibility="invisible"
-		    android:gravity="center"/>
+		android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+		android:layout_margin="10dp">
+			<TextView
+				android:id="@+id/countDown"
+				android:layout_width="fill_parent"
+				android:layout_height="wrap_content"
+				android:text="0"
+				android:textAppearance="?android:attr/textAppearanceMedium"
+				android:gravity="center|top"/>
+			<TextView
+				android:id="@+id/welcomeText"
+				android:layout_width="fill_parent"
+				android:layout_height="wrap_content"
+				android:text="Swipe" 
+				android:textAppearance="?android:attr/textAppearanceMedium"
+				android:gravity="center|top"/>
+			<ListView
+				android:id="@+id/deviceList"
+				android:layout_width="fill_parent"
+				android:layout_height="fill_parent"
+			    android:visibility="invisible"
+				android:gravity="center"/>
 	</LinearLayout>
 
 </RelativeLayout>
