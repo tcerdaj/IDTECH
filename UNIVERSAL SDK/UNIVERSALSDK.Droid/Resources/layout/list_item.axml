@@ -1,7 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
-<TextView xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="fill_parent"
-    android:layout_height="fill_parent"
-    android:padding="10dp"
-    android:textSize="16sp">
-</TextView>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+ android:layout_width="match_parent"
+ android:layout_height="match_parent" >
+<TextView 
+		android:id="@+id/col_name"
+        android:gravity="left"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginLeft="6dip"
+        android:layout_marginTop="6dip"
+        android:textAppearance="?android:attr/textAppearanceLarge" />
+
+<TextView 
+		android:id="@+id/col_address"
+        android:gravity="right"
+        android:layout_width="fill_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginLeft="6dip"
+        android:layout_marginTop="6dip"
+        android:layout_marginRight="6dip"
+        android:layout_toRightOf="@android:id/text1"
+        android:textAppearance="?android:attr/textAppearanceLarge"
+        android:textColor="@color/material_grey_800"/>
+</LinearLayout>
